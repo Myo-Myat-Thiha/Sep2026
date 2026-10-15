@@ -1,0 +1,16 @@
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# .NET build output
+**/bin/
+**/obj/
+artifacts/
+TestResults/
+
+# NuGet packages
+*.nupkg
+*.snupkg
