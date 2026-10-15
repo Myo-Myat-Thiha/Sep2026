@@ -32,17 +32,15 @@
                 email = value;
             }
         }
+        public IReadOnlyList<PortfolioModel> Portfolios => portfolios.AsReadOnly();
 
-        public List<PortfolioModel> Portfolios
-        {
-            get { return portfolios; }
-        }
         //Default Constructor
         public UserModel(string name, string email)
         {
             //Argument Validation
             ArgumentNullException.ThrowIfNullOrWhiteSpace(name, nameof(name));
             ArgumentNullException.ThrowIfNullOrWhiteSpace(email, nameof(email));
+            ValidateEmailFormat(email);
 
             this.userId = Guid.NewGuid();
             this.name = name;
@@ -55,17 +53,25 @@
         {
             //Argument Validation
             ArgumentNullException.ThrowIfNull(portfolio, nameof(portfolio));
+            if(portfolio.OwnerId != UserId)
+            {
+                throw new ArgumentException(
+                    @"The portfolio does not belong to this user. It already belongs to another user.
+                    Maybe in other lifetimes or different multiverse (╥﹏╥).",
+                    nameof(portfolio)
+                    );
+            }
             if(Portfolios.Any(p => p.PortfolioId == portfolio.PortfolioId)) 
             {
-                throw new InvalidOperationException($"Portfolio with ID {portfolio.PortfolioId} already exists for User: {userId}");
+                throw new InvalidOperationException($"Portfolio with ID {portfolio.PortfolioId} is already exists for User: {userId}");
             }
             portfolios.Add(portfolio);
             Console.WriteLine($"Added Portfolio: {portfolio.PortfolioId} to User: {userId}");
         }
         public PortfolioModel CreatePortfolio()
         {
-            PortfolioModel newPortfolio = new PortfolioModel();
-            portfolios.Add(newPortfolio);
+            PortfolioModel newPortfolio = new PortfolioModel(UserId);
+            AddPortfolio(newPortfolio);
             Console.WriteLine($"Created new Portfolio: {newPortfolio.PortfolioId} for User: {userId}");
             return newPortfolio;
         }
@@ -89,6 +95,7 @@
         public void UpdateEmail(string newEmail)
         {
             ArgumentNullException.ThrowIfNullOrWhiteSpace(newEmail, nameof(newEmail));
+            ValidateEmailFormat(newEmail);
             Email = newEmail;
         }
         public void UpdateName(string newName)
