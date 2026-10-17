@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "Sep2026.FinancialPortfolio": {
+      "commandName": "Project"
+    },
+    "Container (Dockerfile)": {
+      "commandName": "Docker"
+    }
+  }
+}
