@@ -120,7 +120,7 @@ namespace Sep2026.FinancePortfolio
             {
                 throw new InvalidOperationException("Holding not found in portfolio.");
             }
-            if (holding.Share < shareQuantity)
+            if (holding.ShareCount < shareQuantity)
             {
                 throw new InvalidOperationException("Insufficient shares to sell.");
             }
