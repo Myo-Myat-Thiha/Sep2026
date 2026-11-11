@@ -1,4 +1,4 @@
-﻿namespace Sep2026.FinancePortfolio
+namespace Sep2026.Domain
 {
     public class UserModel
     {

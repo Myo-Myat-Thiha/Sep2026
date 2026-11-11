@@ -1,17 +1,18 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace Sep2026.FinancePortfolio
+namespace Sep2026.Domain
 {
     public abstract class SecurityModel
     {
         //Feilds
         private readonly Guid securityId;
-        private string tickerSymbol { get; private set; }
-        private decimal currentValue { get; set; }
+        private string tickerSymbol;
+        private decimal? currentValue;
+        private string securityType;
 
 
         //Properties
@@ -33,14 +34,17 @@ namespace Sep2026.FinancePortfolio
                 tickerSymbol = value;
             }
         }
-        public decimal CurrentValue
+        // Null means that no market quote has been received yet; zero is a known price.
+        public decimal? CurrentValue
         {
             get { return currentValue; }
             private set
             {
                 // Argument validation
-                ArgumentNullException.ThrowIfNull(value, nameof(value));
-                ValidatePositiveNumber(value);
+                if (value.HasValue)
+                {
+                    ValidatePositiveNumber(value.Value);
+                }
                 // Log the update action
                 Console.WriteLine($"Current value updated to: {value}");
                 currentValue = value;
@@ -48,14 +52,14 @@ namespace Sep2026.FinancePortfolio
         }
         public string SecurityType
         {
-            get { return SecurityType; }
+            get { return securityType; }
             private set
             {
                 // Argument validation
                 ArgumentNullException.ThrowIfNullOrWhiteSpace(value, nameof(value));
                 // Log the update action
                 Console.WriteLine($"Security type updated to: {value}");
-                SecurityType = value;
+                securityType = value;
             }
         }
         //Default Constructor
@@ -63,13 +67,12 @@ namespace Sep2026.FinancePortfolio
         {
             this.securityId = Guid.NewGuid();
             this.tickerSymbol = tickerSymbol;
-            this.currentValue = 0;
-            this.SecurityType = string.Empty;
+            this.currentValue = null;
+            this.securityType = string.Empty;
         }
 
         public void UpdateCurrentValue(decimal newValue)
         {
-            ArgumentNullException.ThrowIfNull(newValue, nameof(newValue));
             ValidatePositiveNumber(newValue);
             CurrentValue = newValue;
         }

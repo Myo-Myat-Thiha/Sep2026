@@ -1,6 +1,6 @@
-﻿using System.Net.NetworkInformation;
+using System.Net.NetworkInformation;
 
-namespace Sep2026.FinancePortfolio
+namespace Sep2026.Domain
 {
     public enum CurrencyType{ USD, EUR, GBP, JPY, AUD, CAD, MMK}
     public enum PortfolioType

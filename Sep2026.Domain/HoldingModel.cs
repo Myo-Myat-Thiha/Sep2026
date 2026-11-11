@@ -1,4 +1,4 @@
-﻿namespace Sep2026.FinancePortfolio
+namespace Sep2026.Domain
 {
     public class HoldingModel
     {
@@ -75,9 +75,11 @@
             ValidatePositiveNumber(amount);
             ValidatePositiveNumber(purchasePrice);
             decimal totalCost = averagePurchasePrice * shareCount + purchasePrice * amount;
-            ShareCount += amount;
-            AveragePurchasePrice = totalCost / shareCount;
-            Console.WriteLine($"Bought {amount} shares of {TickerSymbol} at {purchasePrice} each. New average purchase price: {averagePurchasePrice}");
+            int newShareCount = checked(shareCount + amount);
+            decimal newAveragePurchasePrice = totalCost / newShareCount;
+            ShareCount += newShareCount;
+            AveragePurchasePrice = newAveragePurchasePrice;
+            Console.WriteLine($"Bought {amount} shares of {TickerSymbol} at {purchasePrice} each. New average purchase price: {newAveragePurchasePrice}");
         }
         internal void SellShares(int amount)
         {

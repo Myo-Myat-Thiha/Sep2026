@@ -1,3 +1,6 @@
 <Solution>
-  <Project Path="Sep2026.FinancialPortfolio/Sep2026.FinancialPortfolio.csproj" Id="da3a8da6-7e34-4562-bf36-218231321980" />
+  <Project Path="ConsoleApp/ConsoleApp.csproj" Id="22d205c0-75a9-4427-9a8c-9fdfd4ce8b9e" />
+  <Project Path="Sep2026.Application/Sep2026.Application.csproj" Id="11233529-a36e-4dfb-8901-32c8d162e8a2" />
+  <Project Path="Sep2026.Domain/Sep2026.Domain.csproj" Id="3925292b-dcb3-49f4-a634-e732098db882" />
+  <Project Path="Sep2026.Infrastructure/Sep2026.Infrastructure.csproj" Id="7134ba57-7a2e-4090-8f7f-d15db2b0a294" />
 </Solution>
