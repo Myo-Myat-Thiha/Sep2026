@@ -14,9 +14,16 @@ namespace Sep2026.Domain
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(tickerSymbol, nameof(tickerSymbol));
             if (price < 0) throw new ArgumentOutOfRangeException(nameof(price), "Price cannot be negative.");
-            this.TickerSymbol = tickerSymbol;
+            ArgumentException.ThrowIfNullOrWhiteSpace(currencyType);
+            var currencyCode = currencyType.Trim().ToUpperInvariant();
+            if (!Enum.GetNames<CurrencyType>().Contains(currencyCode, StringComparer.Ordinal))
+                throw new ArgumentException("The quote currency is not supported.", nameof(currencyType));
+            if (quoteAt == default)
+                throw new ArgumentException("A quote timestamp is required.", nameof(quoteAt));
+
+            this.TickerSymbol = tickerSymbol.Trim().ToUpperInvariant();
             this.Price = price;
-            this.CurrencyType = currencyType;
+            this.CurrencyType = currencyCode;
             this.QuoteAt = quoteAt;
         }
     }

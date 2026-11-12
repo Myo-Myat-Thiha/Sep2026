@@ -1,5 +1,3 @@
-using System.Net.NetworkInformation;
-
 namespace Sep2026.Domain
 {
     public enum CurrencyType{ USD, EUR, GBP, JPY, AUD, CAD, MMK}
@@ -22,7 +20,7 @@ namespace Sep2026.Domain
         //Fields
         private readonly Guid portfolioId;
         private decimal cashBalance;
-        private List<HoldingModel> holdings;
+        private readonly List<HoldingModel> holdings;
 
         //Properties
         public Guid PortfolioId => portfolioId;
@@ -39,26 +37,80 @@ namespace Sep2026.Domain
         public Guid OwnerId { get; } //Dependency
         public PortfolioType PortfolioType { get; private set; }
         public CurrencyType CurrencyType { get; private set; }
-        public DateTimeOffset CreatedAt { get; } //Has to go to entity later
+        public DateTimeOffset CreatedAt { get; }
         public PortfolioStatus Status { get; private set; }
 
         //Defualt Constructor
         //To make sure that the portfolio is always associated with a specific user, we require the ownerId to be passed in during construction.
         public PortfolioModel(Guid ownerId)
+            : this(Guid.NewGuid(), 0m, Array.Empty<HoldingModel>(), ownerId,
+                PortfolioType.Individual, CurrencyType.USD, DateTimeOffset.UtcNow,
+                PortfolioStatus.Active)
         {
-            if(Guid.Empty.Equals(ownerId))
-            {
-                throw new ArgumentException("An owner ID is required and cannot be empty.", nameof(ownerId));
-            }
-            this.portfolioId    = Guid.NewGuid();
-            this.cashBalance    = 0;
-            this.holdings       = new List<HoldingModel>();
-            this.OwnerId        = ownerId;
-            this.PortfolioType  = PortfolioType.Individual;  //Default
-            this.CurrencyType   = CurrencyType.USD;          //Default
-            this.Status         = PortfolioStatus.Active;    //Default
-            this.CreatedAt      = DateTimeOffset.UtcNow;
         }
+        //Restoring the Existing Portfolio from the Database.
+        private PortfolioModel(
+            Guid portfolioId,
+            decimal cashBalance,
+            IEnumerable<HoldingModel> holdings,
+            Guid ownerId,
+            PortfolioType portfolioType,
+            CurrencyType currencyType,
+            DateTimeOffset createdAt,
+            PortfolioStatus status)
+        {
+            if (portfolioId == Guid.Empty)
+                throw new ArgumentException("A portfolio ID is required.", nameof(portfolioId));
+            if (ownerId == Guid.Empty)
+                throw new ArgumentException("An owner ID is required.", nameof(ownerId));
+            ArgumentOutOfRangeException.ThrowIfNegative(cashBalance);
+            if (!Enum.IsDefined(portfolioType))
+                throw new ArgumentOutOfRangeException(nameof(portfolioType));
+            if (!Enum.IsDefined(currencyType))
+                throw new ArgumentOutOfRangeException(nameof(currencyType));
+            if (!Enum.IsDefined(status))
+                throw new ArgumentOutOfRangeException(nameof(status));
+            if (createdAt == default)
+                throw new ArgumentException("A creation timestamp is required.", nameof(createdAt));
+            ArgumentNullException.ThrowIfNull(holdings);
+
+            var restoredHoldings = holdings.ToList();
+            var holdingIds = new HashSet<Guid>();
+            var securityIds = new HashSet<Guid>();
+            foreach (var holding in restoredHoldings)
+            {
+                if (holding is null)
+                    throw new ArgumentException("Holdings cannot contain null entries.", nameof(holdings));
+                if (holding.PortfolioId != portfolioId)
+                    throw new ArgumentException("Every holding must belong to this portfolio.", nameof(holdings));
+                if (!holdingIds.Add(holding.HoldingId))
+                    throw new ArgumentException("Duplicate holding IDs are not allowed.", nameof(holdings));
+                if (!securityIds.Add(holding.SecurityId))
+                    throw new ArgumentException("A security can appear only once in a portfolio.", nameof(holdings));
+            }
+
+            this.portfolioId = portfolioId;
+            this.cashBalance = cashBalance;
+            this.holdings = restoredHoldings;
+            this.OwnerId = ownerId;
+            this.PortfolioType = portfolioType;
+            this.CurrencyType = currencyType;
+            this.CreatedAt = createdAt;
+            this.Status = status;
+        }
+
+        public static PortfolioModel Restore(
+            Guid portfolioId,
+            decimal cashBalance,
+            IEnumerable<HoldingModel> holdings,
+            Guid ownerId,
+            PortfolioType portfolioType,
+            CurrencyType currencyType,
+            DateTimeOffset createdAt,
+            PortfolioStatus status)
+            => new PortfolioModel(portfolioId, cashBalance, holdings, ownerId,
+                portfolioType, currencyType, createdAt, status);
+
         public void WithdrawCash(decimal cashAmount)
         {
             EnsureActive();
@@ -99,7 +151,7 @@ namespace Sep2026.Domain
             {
                 throw new InvalidOperationException($"Holding for security {security.TickerSymbol} already exists in portfolio {portfolioId}. Cannot add duplicate holding.");
             }
-            var newHolding = new HoldingModel(security, this);
+            var newHolding = new HoldingModel(security, this.PortfolioId);
             holdings.Add(newHolding);
         }
         public HoldingModel? GetHolding(Guid securityId)
@@ -148,7 +200,7 @@ namespace Sep2026.Domain
             HoldingModel? existingHolding = GetHolding(security.SecurityId);
             if (existingHolding == null)
             {
-                var holding = new HoldingModel(security, this, shareQuantity, purchaseAmount);
+                var holding = new HoldingModel(security, this.PortfolioId, shareQuantity, purchaseAmount);
                 holdings.Add(holding);
                 Console.WriteLine($"Added new holding for security {security.TickerSymbol} with {shareQuantity} shares at {purchaseAmount} each to portfolio {portfolioId}");
             }

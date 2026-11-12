@@ -6,7 +6,7 @@ namespace Sep2026.Domain
         private readonly Guid userId;
         private string name;
         private string email;
-        private List<PortfolioModel> portfolios;
+        private readonly List<PortfolioModel> portfolios;
         //Properties
         public Guid UserId
         {
@@ -36,17 +36,49 @@ namespace Sep2026.Domain
 
         //Default Constructor
         public UserModel(string name, string email)
+            : this(Guid.NewGuid(), name, email, Array.Empty<PortfolioModel>())
         {
-            //Argument Validation
-            ArgumentNullException.ThrowIfNullOrWhiteSpace(name, nameof(name));
-            ArgumentNullException.ThrowIfNullOrWhiteSpace(email, nameof(email));
-            ValidateEmailFormat(email);
+        }
 
-            this.userId = Guid.NewGuid();
+        //Restoring the Existing User from the Database.
+        private UserModel(
+            Guid userId,
+            string name,
+            string email,
+            IEnumerable<PortfolioModel> portfolios)
+        {
+            if (userId == Guid.Empty)
+                throw new ArgumentException("A user ID is required.", nameof(userId));
+            ArgumentException.ThrowIfNullOrWhiteSpace(name);
+            ArgumentException.ThrowIfNullOrWhiteSpace(email);
+            ValidateEmailFormat(email);
+            ArgumentNullException.ThrowIfNull(portfolios);
+
+            var restoredPortfolios = portfolios.ToList();
+            var portfolioIds = new HashSet<Guid>();
+            foreach (var portfolio in restoredPortfolios)
+            {
+                if (portfolio is null)
+                    throw new ArgumentException("Portfolios cannot contain null entries.", nameof(portfolios));
+                if (portfolio.OwnerId != userId)
+                    throw new ArgumentException("Every portfolio must belong to this user.", nameof(portfolios));
+                if (!portfolioIds.Add(portfolio.PortfolioId))
+                    throw new ArgumentException("Duplicate portfolio IDs are not allowed.", nameof(portfolios));
+            }
+
+            this.userId = userId;
             this.name = name;
             this.email = email;
-            this.portfolios = new List<PortfolioModel>();
+            this.portfolios = restoredPortfolios;
         }
+
+        // Restore existing identity and state without replaying business operations.
+        public static UserModel Restore(
+            Guid userId,
+            string name,
+            string email,
+            IEnumerable<PortfolioModel> portfolios)
+            => new UserModel(userId, name, email, portfolios);
 
         //Methods
         public void AddPortfolio(PortfolioModel portfolio)

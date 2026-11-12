@@ -5,18 +5,15 @@ namespace Sep2026.Domain
         //Feilds
         private readonly Guid holdingId;
 
-        //Will Remove later, doesn't need the whole object, just the PortfolioId is enough, but for now keeping it for logging purpose.
-        private readonly PortfolioModel portfolio;  
         private readonly SecurityModel security;
         private int shareCount;
         private decimal averagePurchasePrice;
 
         public Guid HoldingId => holdingId;
-        public PortfolioModel Portfolio => portfolio;
         public SecurityModel Security => security;
         public string TickerSymbol => security.TickerSymbol;
         public Guid SecurityId => security.SecurityId;
-        public Guid PortfolioId => portfolio.PortfolioId;
+        public Guid PortfolioId { get; }
         public bool IsEmpty => shareCount == 0;
         public decimal TotalCostBasis => shareCount * averagePurchasePrice;
         // Nullable arithmetic keeps valuations unknown until a market quote is available.
@@ -31,7 +28,7 @@ namespace Sep2026.Domain
             private set 
             {
                 ValidateNonNegative(value);
-                Console.WriteLine($"Setting Share to {value} for {TickerSymbol}: {holdingId} of User: {portfolio.OwnerId}'s {portfolio.PortfolioId} ");
+                Console.WriteLine($"Setting shares to {value} for {TickerSymbol}: holding {holdingId}, portfolio {PortfolioId}");
                 shareCount = value;
             }
         }
@@ -41,35 +38,49 @@ namespace Sep2026.Domain
             private set
             {
                 ValidatePositiveNumber(value);
-                Console.WriteLine($"Setting AveragePurchasePrice to {value} for {TickerSymbol}: {holdingId} of User: {portfolio.OwnerId}'s {portfolio.PortfolioId} ");
+                Console.WriteLine($"Setting average purchase price to {value} for {TickerSymbol}: holding {holdingId}, portfolio {PortfolioId}");
                 averagePurchasePrice = value;
             }
         }
-        public HoldingModel(SecurityModel security, PortfolioModel portfolio)
+        public HoldingModel(SecurityModel security, Guid portfolioId)
+            : this(Guid.NewGuid(), security, portfolioId, 0, 0m)
         {
-            ArgumentNullException.ThrowIfNull(security, nameof(security));
-            ArgumentNullException.ThrowIfNull(portfolio, nameof(portfolio));
-            this.holdingId = Guid.NewGuid();
-            this.security = security;
-            this.shareCount = 0;
-            this.averagePurchasePrice = 0;
-            this.portfolio = portfolio;
         }
-        public HoldingModel(SecurityModel security, PortfolioModel portfolio, int share, decimal averagePurchasePrice)
+        public HoldingModel(SecurityModel security, Guid portfolioId, int share, decimal averagePurchasePrice)
+            : this(Guid.NewGuid(), security, portfolioId, share, averagePurchasePrice)
         {
-            // Argument validation
-            ArgumentNullException.ThrowIfNull(security, nameof(security));
-            ArgumentNullException.ThrowIfNull(portfolio, nameof(portfolio));
-
+            // New funded holdings require positive quantities; restoration also accepts empty holdings.
             ValidatePositiveNumber(share);
-            ValidatePositiveNumber(averagePurchasePrice);
-
-            this.holdingId = Guid.NewGuid();
-            this.security = security;
-            this.shareCount = share;
-            this.averagePurchasePrice = averagePurchasePrice;
-            this.portfolio = portfolio;
         }
+
+        //Restoring the Existing Holding from the Database.
+        private HoldingModel(Guid holdingId, SecurityModel security,Guid portfolioId, int shareCount, decimal averagePurchasePrice)
+        {
+            if (holdingId == Guid.Empty)
+                throw new ArgumentException("A holding ID is required.", nameof(holdingId));
+            if (portfolioId == Guid.Empty)
+                throw new ArgumentException("A portfolio ID is required.", nameof(portfolioId));
+            ArgumentNullException.ThrowIfNull(security);
+            ArgumentOutOfRangeException.ThrowIfNegative(shareCount);
+            ArgumentOutOfRangeException.ThrowIfNegative(averagePurchasePrice);
+            if (shareCount > 0 && averagePurchasePrice == 0)
+                throw new ArgumentOutOfRangeException(nameof(averagePurchasePrice),
+                    "A nonempty holding must have a positive average purchase price.");
+            this.holdingId = holdingId;
+            this.security = security;
+            this.PortfolioId = portfolioId;
+            this.shareCount = shareCount;
+            this.averagePurchasePrice = averagePurchasePrice;
+        }
+
+        public static HoldingModel Restore(
+            Guid holdingId,
+            SecurityModel security,
+            Guid portfolioId,
+            int shareCount,
+            decimal averagePurchasePrice)
+            => new HoldingModel(holdingId, security, portfolioId, shareCount, averagePurchasePrice);
+
         internal void BuyShares(int amount, decimal purchasePrice)
         {
             ValidatePositiveNumber(amount);
@@ -77,7 +88,7 @@ namespace Sep2026.Domain
             decimal totalCost = averagePurchasePrice * shareCount + purchasePrice * amount;
             int newShareCount = checked(shareCount + amount);
             decimal newAveragePurchasePrice = totalCost / newShareCount;
-            ShareCount += newShareCount;
+            ShareCount = newShareCount;
             AveragePurchasePrice = newAveragePurchasePrice;
             Console.WriteLine($"Bought {amount} shares of {TickerSymbol} at {purchasePrice} each. New average purchase price: {newAveragePurchasePrice}");
         }

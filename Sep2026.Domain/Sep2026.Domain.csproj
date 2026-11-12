@@ -6,4 +6,8 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Sep2026.Domain.Tests" />
+  </ItemGroup>
+
 </Project>

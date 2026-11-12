@@ -1,9 +1,12 @@
 using ConsoleApp.Configuration;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Sep2026.Application.Interfaces;
 using Sep2026.Infrastructure.MarketData;
+using Sep2026.Infrastructure.Persistence;
 
 // Load appsettings, development user secrets, environment variables, and arguments.
 var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
@@ -11,6 +14,17 @@ var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
     Args = args,
     ContentRootPath = AppContext.BaseDirectory
 });
+
+// Register a scoped context using the connection string from configuration.
+var connectionString = builder.Configuration.GetConnectionString("Gemino");
+if (string.IsNullOrWhiteSpace(connectionString))
+{
+    throw new InvalidOperationException(
+        "Set ConnectionStrings:Gemino in configuration, user secrets, or environment variables.");
+}
+
+builder.Services.AddDbContext<GeminoDbContext>(options =>
+    options.UseSqlServer(connectionString));
 
 // Bind the Alpaca section to typed settings and validate before the app starts.
 builder.Services.AddOptions<AlpacaOptions>()
@@ -35,11 +49,17 @@ await host.StartAsync();
 
 try
 {
+    // A console app creates its own scope for a unit of work. Future repositories
+    // and application services resolved here will share the scoped DbContext.
+    await using var scope = host.Services.CreateAsyncScope();
+    var dbContext = scope.ServiceProvider.GetRequiredService<GeminoDbContext>();
+
     // Resolve services here to start an application workflow. Resolving the provider
     // constructs the client but does not send an HTTP request.
-    var marketDataProvider = host.Services.GetRequiredService<IMarketDataProvider>();
-    Console.WriteLine("Startup complete. The market data provider is ready.");
+    var marketDataProvider = scope.ServiceProvider.GetRequiredService<IMarketDataProvider>();
+    Console.WriteLine("Startup complete. The database context and market data provider are configured.");
 
+    // Resolving the context does not open a database connection or run queries.
     // Example for a future workflow:
     // var quote = await marketDataProvider.GetMarketQuoteAsync("AAPL");
 }
