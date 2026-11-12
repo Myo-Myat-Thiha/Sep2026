@@ -1,5 +1,6 @@
 <Solution>
   <Project Path="ConsoleApp/ConsoleApp.csproj" Id="22d205c0-75a9-4427-9a8c-9fdfd4ce8b9e" />
+  <Project Path="ConsoleApp.Tests/ConsoleApp.Tests.csproj" />
   <Project Path="Sep2026.Application/Sep2026.Application.csproj" Id="11233529-a36e-4dfb-8901-32c8d162e8a2" />
   <Project Path="Sep2026.Application.Tests/Sep2026.Application.Tests.csproj" />
   <Project Path="Sep2026.Domain/Sep2026.Domain.csproj" Id="3925292b-dcb3-49f4-a634-e732098db882" />

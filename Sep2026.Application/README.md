@@ -53,7 +53,8 @@ the DTO was requested. API refresh can be added as a separate explicit use case.
 
 ## Dependency injection and usage
 
-`ConsoleApp/Program.cs` registers both boundaries before `builder.Build()`:
+`ConsoleApp/Program.cs` calls `Configuration/ServiceRegistration.cs` to register
+these boundaries before `builder.Build()`:
 
 ```csharp
 builder.Services.AddScoped<IPortfolioRepository, PortfolioRepository>();
@@ -61,13 +62,12 @@ builder.Services.AddScoped<IPortfolioQueries, PortfolioQueries>();
 builder.Services.AddScoped<IPortfolioService, PortfolioService>();
 ```
 
-Inside the existing scope, after obtaining a portfolio ID:
+After obtaining a portfolio ID, a caller creates a scope for one data action:
 
 ```csharp
+await using var scope = scopeFactory.CreateAsyncScope();
 var service = scope.ServiceProvider.GetRequiredService<IPortfolioService>();
-var summaries = await service.GetByUserIdAsync(userId);
-// After a portfolio is selected:
-var details = await service.GetByIdAsync(portfolioId);
+var details = await service.GetByIdAsync(portfolioId, cancellationToken);
 
 if (details is null)
     Console.WriteLine("Portfolio not found.");
@@ -75,9 +75,12 @@ else
     Console.WriteLine($"{details.PortfolioId}: {details.Holdings.Count} holdings");
 ```
 
-Startup resolves the service to verify wiring; it does not invoke the read method
-or make a database/API request. Existing Alpaca configuration validation still
-applies to the console host.
+The console presentation holds a scope factory and resolves this service for each
+list, detail, or reload request. It disposes the scope before prompting again and
+retains only detached DTOs between requests. Each new action receives a new scoped
+context. Host shutdown cancellation is forwarded into the service. These UI
+actions do not request new market prices and need no Alpaca credentials; API
+configuration is validated when the market data provider is requested.
 
 ## Tests
 

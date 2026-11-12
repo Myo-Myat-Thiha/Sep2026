@@ -13,7 +13,7 @@ case. Security mapping is shared code, not an additional Security repository.
 | `Persistence/Mappings/PortfolioMapper.cs` | Portfolio fields, currency conversion, and restoration |
 | `Persistence/Mappings/HoldingMapper.cs` | Holding identity, quantities, security relationship, and restoration |
 | `Persistence/Mappings/SecurityMapper.cs` | Security identity and optional quote with currency and timestamp |
-| `ConsoleApp/Program.cs` | Scoped dependency registration |
+| `ConsoleApp/Configuration/ServiceRegistration.cs` | Scoped dependency registration |
 
 ```text
 Application interface: IPortfolioRepository
@@ -55,7 +55,7 @@ the portfolio from each holding.
 
 ## Using the registered repository
 
-`Program.cs` already registers:
+`Program.cs` calls `Configuration/ServiceRegistration.cs`, which registers:
 
 ```csharp
 builder.Services.AddScoped<IPortfolioRepository, PortfolioRepository>();
@@ -63,12 +63,13 @@ builder.Services.AddScoped<IPortfolioService, PortfolioService>();
 ```
 
 Application's `PortfolioService` uses this repository and maps the Domain result
-to `PortfolioDetailsDto`. Inside the existing console scope, after obtaining a
-real portfolio ID from your database, a caller-facing read can be performed like this:
+to `PortfolioDetailsDto`. After obtaining a real portfolio ID from your database,
+a caller-facing read can be performed in a scope for that action:
 
 ```csharp
+await using var scope = scopeFactory.CreateAsyncScope();
 var service = scope.ServiceProvider.GetRequiredService<IPortfolioService>();
-var portfolio = await service.GetByIdAsync(portfolioId);
+var portfolio = await service.GetByIdAsync(portfolioId, cancellationToken);
 
 if (portfolio is null)
     Console.WriteLine("Portfolio not found.");
@@ -76,9 +77,10 @@ else
     Console.WriteLine($"{portfolio.PortfolioId}: {portfolio.Holdings.Count} holdings");
 ```
 
-No query has been added to normal application startup. See the
+The console browser invokes list and detail reads in response to user actions. See the
 [Application guide](../../Sep2026.Application/README.md) for the interface and DTO
-boundaries. The service and repository share the existing scope.
+boundaries. The service, repository, and context share that action's scope, which
+is disposed before the next input prompt. A later load creates a fresh scope.
 
 This interface currently returns a detached Domain snapshot. Changing it does not
 automatically change a generated EF entity or save anything. A future write path

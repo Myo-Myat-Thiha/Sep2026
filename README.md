@@ -2,14 +2,15 @@
 
 ## Project structure
 
-The solution targets .NET 10 and contains four application projects and three test projects:
+The solution targets .NET 10 and contains four application projects and four test projects:
 
 | Project | Responsibility | Project references |
 | --- | --- | --- |
 | `Sep2026.Domain` | Portfolio, holding, security and user models, business rules, and `MarketQuote` | None |
 | `Sep2026.Application` | Use cases in `Services`, shared contracts in `Interfaces`, and application DTOs in `DTOs` | Domain |
 | `Sep2026.Infrastructure` | Market API implementations in `MarketData`; SQL Server context, generated entities, and schema scripts in `Persistence` | Application, Domain |
-| `ConsoleApp` | Executable entry point, configuration, and dependency injection setup | Application, Infrastructure |
+| `ConsoleApp` | Console presentation, executable entry point, configuration, and dependency injection | Application, Infrastructure |
+| `ConsoleApp.Tests` | Input, rendering, navigation, request scopes, startup, and shutdown tests | ConsoleApp |
 | `Sep2026.Domain.Tests` | Restoration, validation, quote-state, and holding-calculation regression tests | Domain |
 | `Sep2026.Application.Tests` | Portfolio service contracts, DTO mapping, and repository coordination | Application |
 | `Sep2026.Infrastructure.Tests` | Portfolio entity mapping and isolated SQL Server repository tests | Infrastructure |
@@ -20,6 +21,11 @@ ConsoleApp/
     Program.cs
     appsettings.json
     Configuration/AlpacaOptions.cs
+    Configuration/ServiceRegistration.cs
+    Hosting/ConsoleSession.cs
+    Presentation/PortfolioConsoleApp.cs
+    Presentation/PortfolioRenderer.cs
+    Presentation/ConsoleInput.cs
 Sep2026.Domain/
     UserModel.cs
     PortfolioModel.cs
@@ -91,15 +97,21 @@ dotnet run --project ConsoleApp/ConsoleApp.csproj
 ```
 
 In Visual Studio, open `Sep2026.slnx` and select `ConsoleApp` as the startup project.
-The console entry point validates configuration, creates a scope, resolves the
-portfolio service (and its database context) and market data provider, prints a startup message, and exits.
-It does not query SQL Server or call Alpaca during startup.
+The console entry point starts the host and launches the portfolio browser.
+Enter a user ID, select a portfolio by number,
+view its holdings, return to the list, reload saved data, change user, or exit.
+Database reads happen in response to those actions. The screens do not call Alpaca.
+See the [console presentation guide](ConsoleApp/Presentation/README.md) for commands,
+formatting, request scopes, cancellation, and tests. `Q`, end-of-input, and Ctrl+C
+end the session and stop the host.
 
 ## Console startup and configuration
 
-`ConsoleApp/Program.cs` is the composition root: it loads settings, registers
-dependencies, builds and starts the host, runs an application workflow, and stops
-the host. Business logic belongs in Application services and Domain models.
+`ConsoleApp/Program.cs` is the composition root: it loads settings, calls
+`Configuration/ServiceRegistration.cs` to register dependencies, builds the host,
+and calls `Hosting/ConsoleSession.cs` to start, run, and stop it. Dependency
+validation checks registrations and prevents scoped services being resolved from
+the root container. Business logic belongs in Application services and Domain models.
 
 The [.NET Generic Host](https://learn.microsoft.com/en-us/dotnet/core/extensions/generic-host)
 loads configuration in this order, with later sources overriding earlier ones:
@@ -115,11 +127,13 @@ on build and publish. This keeps settings loading consistent when launching from
 Visual Studio, the solution directory, or a published folder.
 
 `AlpacaOptions` binds the `Alpaca` section. `ApiKeyId`, `ApiSecretKey`, and `Feed`
-must not be blank; missing values cause startup validation to fail. The committed
+must not be blank when an API-backed feature requests `IMarketDataProvider`.
+Saved-portfolio browsing starts without Alpaca credentials. The committed
 settings file contains the local SQL Server connection string, default `iex` feed,
 and logging settings. It contains no API credentials or database password.
 
-Set your local credentials using user secrets (replace the example values):
+When adding API-backed features, set local credentials using user secrets
+(replace the example values):
 
 ```powershell
 dotnet user-secrets set "Alpaca:ApiKeyId" "YOUR_API_KEY" --project ConsoleApp/ConsoleApp.csproj
@@ -150,7 +164,8 @@ console startup selects the Infrastructure implementation. See Microsoft's
 
 ## Database context registration
 
-`Program.cs` reads `ConnectionStrings:Gemino` and registers the generated context:
+`Program.cs` calls `AddGeminoConsole`, which reads `ConnectionStrings:Gemino`
+and registers the generated context. The registration includes:
 
 ```csharp
 var connectionString = builder.Configuration.GetConnectionString("Gemino");
@@ -172,18 +187,34 @@ dotnet user-secrets set "ConnectionStrings:Gemino" "Server=.\SQLEXPRESS;Database
 
 The environment-variable equivalent is `ConnectionStrings__Gemino`.
 
-`AddDbContext` registers a scoped service. Console apps create their own scope:
+`AddDbContext` registers a scoped service. The console browser creates an async
+scope for each list, detail, or reload action:
 
 ```csharp
-await using var scope = host.Services.CreateAsyncScope();
-var dbContext = scope.ServiceProvider.GetRequiredService<GeminoDbContext>();
+await using var scope = scopeFactory.CreateAsyncScope();
+var service = scope.ServiceProvider.GetRequiredService<IPortfolioService>();
+var details = await service.GetByIdAsync(portfolioId, cancellationToken);
 ```
 
-Future repositories resolved from that scope will share the same context. Create
-a fresh scope for each independent operation. Resolving a context configures it;
+The scoped service, repository, and queries share one context within that action.
+The scope is disposed before the next input prompt; the singleton UI retains only
+DTOs and its scope factory between requests. Resolving a context configures it;
 the connection is opened when a database operation is requested. Startup currently
 performs no database queries or schema changes. See Microsoft's
 [DbContext lifetime and configuration guidance](https://learn.microsoft.com/en-us/ef/core/dbcontext-configuration/).
+
+## Tests
+
+```powershell
+dotnet test Sep2026.slnx
+```
+
+Console tests use scripted text input, a fake Application service, and real DI
+scopes/context construction without executing SQL or HTTP calls. They cover
+navigation, retry, rendering, cancellation during input and data requests, async
+scope disposal before prompts, optional API settings, and host shutdown. The
+existing SQL Server integration tests remain opt-in; see
+[their instructions](Sep2026.Infrastructure.Tests/README.md).
 
 ## Domain model
 
