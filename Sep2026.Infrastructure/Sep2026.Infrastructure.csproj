@@ -30,4 +30,8 @@
     <ProjectReference Include="..\Sep2026.Domain\Sep2026.Domain.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Sep2026.Infrastructure.Tests" />
+  </ItemGroup>
+
 </Project>

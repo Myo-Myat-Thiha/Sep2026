@@ -48,6 +48,7 @@ namespace Sep2026.Domain
                 PortfolioStatus.Active)
         {
         }
+
         //Restoring the Existing Portfolio from the Database.
         private PortfolioModel(
             Guid portfolioId,
@@ -59,11 +60,14 @@ namespace Sep2026.Domain
             DateTimeOffset createdAt,
             PortfolioStatus status)
         {
+
+            //Argument Validation
             if (portfolioId == Guid.Empty)
                 throw new ArgumentException("A portfolio ID is required.", nameof(portfolioId));
             if (ownerId == Guid.Empty)
                 throw new ArgumentException("An owner ID is required.", nameof(ownerId));
             ArgumentOutOfRangeException.ThrowIfNegative(cashBalance);
+            //Enumeration Validation
             if (!Enum.IsDefined(portfolioType))
                 throw new ArgumentOutOfRangeException(nameof(portfolioType));
             if (!Enum.IsDefined(currencyType))
@@ -74,9 +78,13 @@ namespace Sep2026.Domain
                 throw new ArgumentException("A creation timestamp is required.", nameof(createdAt));
             ArgumentNullException.ThrowIfNull(holdings);
 
+            //Map the holdings to a list 
             var restoredHoldings = holdings.ToList();
+
             var holdingIds = new HashSet<Guid>();
             var securityIds = new HashSet<Guid>();
+
+            //Validation the each holding in the portfolio
             foreach (var holding in restoredHoldings)
             {
                 if (holding is null)

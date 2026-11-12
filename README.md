@@ -2,7 +2,7 @@
 
 ## Project structure
 
-The solution targets .NET 10 and contains four application projects and a Domain test project:
+The solution targets .NET 10 and contains four application projects and three test projects:
 
 | Project | Responsibility | Project references |
 | --- | --- | --- |
@@ -11,6 +11,8 @@ The solution targets .NET 10 and contains four application projects and a Domain
 | `Sep2026.Infrastructure` | Market API implementations in `MarketData`; SQL Server context, generated entities, and schema scripts in `Persistence` | Application, Domain |
 | `ConsoleApp` | Executable entry point, configuration, and dependency injection setup | Application, Infrastructure |
 | `Sep2026.Domain.Tests` | Restoration, validation, quote-state, and holding-calculation regression tests | Domain |
+| `Sep2026.Application.Tests` | Portfolio service contracts, DTO mapping, and repository coordination | Application |
+| `Sep2026.Infrastructure.Tests` | Portfolio entity mapping and isolated SQL Server repository tests | Infrastructure |
 
 ```text
 Sep2026.slnx
@@ -29,7 +31,15 @@ Sep2026.Domain.Tests/
     RestorationTests.cs
 Sep2026.Application/
     DTOs/AssetDto.cs
+    DTOs/PortfolioDetailsDto.cs
+    DTOs/PortfolioSummaryDto.cs
+    DTOs/HoldingDetailsDto.cs
+    DTOs/MarketQuoteDto.cs
     Interfaces/IMarketDataProvider.cs
+    Interfaces/IPortfolioRepository.cs
+    Interfaces/IPortfolioService.cs
+    Interfaces/IPortfolioQueries.cs
+    Services/PortfolioService.cs
     Services/TradeService.cs
 Sep2026.Infrastructure/
     MarketData/MarketDataClient.cs
@@ -37,6 +47,9 @@ Sep2026.Infrastructure/
     MarketData/QuoteApiResponse.cs
     Persistence/GeminoDbContext.cs
     Persistence/Entities/
+    Persistence/Mappings/
+    Persistence/Repositories/PortfolioRepository.cs
+    Persistence/Queries/PortfolioQueries.cs
     Persistence/Sql/001_CreatePortfolioDatabase.sql
 ```
 
@@ -50,12 +63,25 @@ or Infrastructure, and Application must not reference Infrastructure. The consol
 project constructs and connects implementations at startup.
 
 `TradeService` is currently an empty placeholder. The EF Core packages, generated
-entities, and `GeminoDbContext` are in Infrastructure. Repositories and broker
-workflows have not been implemented. The
+entities, and `GeminoDbContext` are in Infrastructure. The first read-only
+`PortfolioRepository` loads complete portfolios through the Domain restoration
+factories. See the [Portfolio repository guide](Sep2026.Infrastructure/Persistence/PORTFOLIO_REPOSITORY.md)
+for its dependency flow, mappings, usage, and tests. Broker workflows are deferred. The
 initial SQL Server schema is versioned under `Persistence/Sql`. See the
 [database setup instructions](Sep2026.Infrastructure/Persistence/Sql/README.md)
 for creating the `Gemino` portfolio tables and market-price history. Broker order submission and execution
 history are deferred until an external broker integration is introduced.
+
+`PortfolioService` coordinates the repository read and returns detached portfolio,
+holding, and quote DTOs through `IPortfolioService`. See the
+[Application contracts guide](Sep2026.Application/README.md) for the complete
+caller-to-repository flow and tests.
+
+The user selection list uses `PortfolioService.GetByUserIdAsync` and
+`IPortfolioQueries` to retrieve lightweight summaries from `Portfolios`. Selecting
+a summary can then call the existing detail method. See the
+[LINQ walkthrough](Sep2026.Infrastructure/Persistence/Queries/README.md) for
+filtering, projection, ordering, enum conversion, and test coverage.
 
 Build and run from the solution directory:
 
@@ -66,7 +92,7 @@ dotnet run --project ConsoleApp/ConsoleApp.csproj
 
 In Visual Studio, open `Sep2026.slnx` and select `ConsoleApp` as the startup project.
 The console entry point validates configuration, creates a scope, resolves the
-database context and market data provider, prints a startup message, and exits.
+portfolio service (and its database context) and market data provider, prints a startup message, and exits.
 It does not query SQL Server or call Alpaca during startup.
 
 ## Console startup and configuration

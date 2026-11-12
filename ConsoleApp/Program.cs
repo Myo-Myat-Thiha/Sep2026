@@ -5,8 +5,11 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Sep2026.Application.Interfaces;
+using Sep2026.Application.Services;
 using Sep2026.Infrastructure.MarketData;
 using Sep2026.Infrastructure.Persistence;
+using Sep2026.Infrastructure.Persistence.Repositories;
+using Sep2026.Infrastructure.Persistence.Queries;
 
 // Load appsettings, development user secrets, environment variables, and arguments.
 var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
@@ -25,6 +28,9 @@ if (string.IsNullOrWhiteSpace(connectionString))
 
 builder.Services.AddDbContext<GeminoDbContext>(options =>
     options.UseSqlServer(connectionString));
+builder.Services.AddScoped<IPortfolioRepository, PortfolioRepository>();
+builder.Services.AddScoped<IPortfolioQueries, PortfolioQueries>();
+builder.Services.AddScoped<IPortfolioService, PortfolioService>();
 
 // Bind the Alpaca section to typed settings and validate before the app starts.
 builder.Services.AddOptions<AlpacaOptions>()
@@ -52,14 +58,14 @@ try
     // A console app creates its own scope for a unit of work. Future repositories
     // and application services resolved here will share the scoped DbContext.
     await using var scope = host.Services.CreateAsyncScope();
-    var dbContext = scope.ServiceProvider.GetRequiredService<GeminoDbContext>();
+    var portfolioService = scope.ServiceProvider.GetRequiredService<IPortfolioService>();
 
     // Resolve services here to start an application workflow. Resolving the provider
     // constructs the client but does not send an HTTP request.
     var marketDataProvider = scope.ServiceProvider.GetRequiredService<IMarketDataProvider>();
-    Console.WriteLine("Startup complete. The database context and market data provider are configured.");
+    Console.WriteLine("Startup complete. The portfolio service and market data provider are configured.");
 
-    // Resolving the context does not open a database connection or run queries.
+    // Resolving the service does not open a database connection or run queries.
     // Example for a future workflow:
     // var quote = await marketDataProvider.GetMarketQuoteAsync("AAPL");
 }
