@@ -6,7 +6,7 @@ The solution targets .NET 10 and contains four application projects and four tes
 
 | Project | Responsibility | Project references |
 | --- | --- | --- |
-| `Sep2026.Domain` | Portfolio, holding, security and user models, business rules, and `MarketQuote` | None |
+| `Sep2026.Domain` | Portfolio, holding and security models, owner-profile validation, business rules, and `MarketQuote` | None |
 | `Sep2026.Application` | Use cases in `Services`, shared contracts in `Interfaces`, and application DTOs in `DTOs` | Domain |
 | `Sep2026.Infrastructure` | Market API implementations in `MarketData`; SQL Server context, generated entities, and schema scripts in `Persistence` | Application, Domain |
 | `ConsoleApp` | Console presentation, executable entry point, configuration, and dependency injection | Application, Infrastructure |
@@ -27,7 +27,7 @@ ConsoleApp/
     Presentation/PortfolioRenderer.cs
     Presentation/ConsoleInput.cs
 Sep2026.Domain/
-    UserModel.cs
+    UserProfileRules.cs
     PortfolioModel.cs
     HoldingModel.cs
     SecurityModel.cs
@@ -35,18 +35,18 @@ Sep2026.Domain/
     RESTORATION.md
 Sep2026.Domain.Tests/
     RestorationTests.cs
+    UserProfileRulesTests.cs
 Sep2026.Application/
     DTOs/AssetDto.cs
-    DTOs/PortfolioDetailsDto.cs
-    DTOs/PortfolioSummaryDto.cs
-    DTOs/HoldingDetailsDto.cs
-    DTOs/MarketQuoteDto.cs
+    DTOs/UserDto.cs
+    Interfaces/IUserStore.cs
+    Services/UserService.cs
+    DTOs/PortfolioDtos.cs
     Interfaces/IMarketDataProvider.cs
     Interfaces/IPortfolioRepository.cs
     Interfaces/IPortfolioService.cs
     Interfaces/IPortfolioQueries.cs
     Services/PortfolioService.cs
-    Services/TradeService.cs
 Sep2026.Infrastructure/
     MarketData/MarketDataClient.cs
     MarketData/AssetApiResponse.cs
@@ -56,6 +56,7 @@ Sep2026.Infrastructure/
     Persistence/Mappings/
     Persistence/Repositories/PortfolioRepository.cs
     Persistence/Queries/PortfolioQueries.cs
+    Persistence/Stores/SqlServerUserStore.cs
     Persistence/Sql/001_CreatePortfolioDatabase.sql
 ```
 
@@ -68,7 +69,7 @@ Keep dependencies pointing toward Domain: Domain must not reference Application
 or Infrastructure, and Application must not reference Infrastructure. The console
 project constructs and connects implementations at startup.
 
-`TradeService` is currently an empty placeholder. The EF Core packages, generated
+The EF Core packages, generated
 entities, and `GeminoDbContext` are in Infrastructure. The first read-only
 `PortfolioRepository` loads complete portfolios through the Domain restoration
 factories. See the [Portfolio repository guide](Sep2026.Infrastructure/Persistence/PORTFOLIO_REPOSITORY.md)
@@ -100,12 +101,23 @@ In Visual Studio, open `Sep2026.slnx` and select `ConsoleApp` as the startup pro
 The console entry point starts the host and launches the portfolio browser.
 Enter a user ID, select a portfolio by number,
 view its holdings, return to the list, reload saved data, change user, or exit.
+Use `N` at the user prompt to create a portfolio-owner profile. Enter its name
+and email; a successful save displays the generated ID and selects the profile.
+New profiles start with an empty portfolio list. `B` cancels the form; `Q` exits.
 Database reads happen in response to those actions. The screens do not call Alpaca.
 See the [console presentation guide](ConsoleApp/Presentation/README.md) for commands,
 formatting, request scopes, cancellation, and tests. `Q`, end-of-input, and Ctrl+C
 end the session and stop the host.
 
 ## Console startup and configuration
+
+Owner-profile creation is a small Transaction Script in `UserService`. It reuses
+`UserProfileRules`, generates an ID, and passes the ID, name, and email to `IUserStore` to insert and
+save. `SqlServerUserStore` implements that contract through EF Core and the
+existing Users table. The service does not construct a user/portfolio Domain
+graph. The current required-email and case-insensitive uniqueness rules remain
+in effect. This creates owner data for portfolios; login registration is deferred.
+See the [Application guide](Sep2026.Application/README.md) for the complete flow.
 
 `ConsoleApp/Program.cs` is the composition root: it loads settings, calls
 `Configuration/ServiceRegistration.cs` to register dependencies, builds the host,
@@ -164,6 +176,12 @@ console startup selects the Infrastructure implementation. See Microsoft's
 
 ## Database context registration
 
+The application uses one database, `Gemino`, through one context type,
+`GeminoDbContext`. Its five application tables are `Users`, `Portfolios`,
+`Holdings`, `Securities`, and `MarketPriceSnapshots`. New context instances per
+operation all access that same database. Integration tests use temporary databases
+with generated names and remove them after each test fixture.
+
 `Program.cs` calls `AddGeminoConsole`, which reads `ConnectionStrings:Gemino`
 and registers the generated context. The registration includes:
 
@@ -209,7 +227,7 @@ performs no database queries or schema changes. See Microsoft's
 dotnet test Sep2026.slnx
 ```
 
-Console tests use scripted text input, a fake Application service, and real DI
+Console tests use scripted text input, a fake portfolio service, a fake profile store, and real DI
 scopes/context construction without executing SQL or HTTP calls. They cover
 navigation, retry, rendering, cancellation during input and data requests, async
 scope disposal before prompts, optional API settings, and host shutdown. The
@@ -225,14 +243,6 @@ for validation rules, examples, and tests that run without SQL Server.
 ```mermaid
 classDiagram
     direction TB
-
-    class UserModel {
-        +Guid UserId
-        +string Name
-        +string Email
-        +IReadOnlyList~PortfolioModel~ Portfolios
-        +CreatePortfolio() PortfolioModel
-    }
 
     class PortfolioModel {
         +Guid PortfolioId
@@ -258,7 +268,10 @@ classDiagram
         +string SecurityType
     }
 
-    UserModel "1" --> "0..*" PortfolioModel : owns
     PortfolioModel "1" *-- "0..*" HoldingModel : contains
     HoldingModel "0..*" --> "1" SecurityModel : references
 ```
+
+Owner profiles are stored through `IUserStore` and returned as `UserDto`.
+`PortfolioModel.OwnerId` identifies the saved owner; loading a portfolio does
+not require a separate in-memory owner aggregate.

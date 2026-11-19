@@ -1,7 +1,6 @@
 using ConsoleApp.Configuration;
 using ConsoleApp.Hosting;
 using ConsoleApp.Presentation;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -9,6 +8,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Sep2026.Application.DTOs;
 using Sep2026.Application.Interfaces;
+using Sep2026.Application.Services;
 using Sep2026.Domain;
 using Sep2026.Infrastructure.Persistence;
 using Xunit;
@@ -18,6 +18,116 @@ namespace ConsoleApp.Tests;
 public sealed class ConsoleSessionTests
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
+
+    [Fact]
+    public async Task NewProfileIsCreatedThenSelectedWithSeparateDisposedWriteAndReadScopes()
+    {
+        var scenario = new Scenario { EmptyList = true };
+        using var output = new StringWriter();
+        using var input = new ScopeCheckingReader("n\n Alice \n Alice@Example.COM \nq\n", scenario);
+        using var host = CreateHost(input, output, scenario);
+        await ConsoleSession.RunAsync(host).WaitAsync(Timeout);
+
+        var created = Assert.Single(scenario.ProfileCreations);
+        Assert.Equal("Alice", created.Name);
+        Assert.Equal("Alice@Example.COM", created.Email);
+        Assert.Equal(created.UserId, Assert.Single(scenario.UserRequests));
+        Assert.Single(scenario.ProfileStores);
+        Assert.NotEqual(scenario.ProfileStores[0].Context.ContextId, Assert.Single(scenario.Instances).Context.ContextId);
+        AssertScopesDisposed(scenario);
+        Assert.Contains("Profile created: Alice", output.ToString());
+        Assert.Contains(created.UserId.ToString(), output.ToString());
+        Assert.Contains("No portfolios found", output.ToString());
+    }
+
+    [Fact]
+    public async Task DuplicateEmailCanBeCorrectedUsingANewScope()
+    {
+        var scenario = new Scenario { ExistingEmailOnce = true, EmptyList = true };
+        using var output = new StringWriter();
+        using var input = new ScopeCheckingReader("n\nAlice\ntaken@example.com\nAlice\nfresh@example.com\nq\n", scenario);
+        using var host = CreateHost(input, output, scenario);
+        await ConsoleSession.RunAsync(host).WaitAsync(Timeout);
+
+        Assert.Equal(new[] { "taken@example.com", "fresh@example.com" }, scenario.ProfileEmails);
+        Assert.Equal("fresh@example.com", Assert.Single(scenario.ProfileCreations).Email);
+        Assert.Equal(2, scenario.ProfileStores.Count);
+        AssertScopesDisposed(scenario);
+        Assert.Contains("email already exists", output.ToString());
+        Assert.Contains("Profile created", output.ToString());
+    }
+
+    [Fact]
+    public async Task InvalidProfileInputCanBeCorrectedWithoutCallingStorageForTheInvalidRequest()
+    {
+        var scenario = new Scenario { EmptyList = true };
+        using var output = new StringWriter();
+        using var input = new ScopeCheckingReader("n\n\nalice@example.com\nAlice\nalice@example.com\nq\n", scenario);
+        using var host = CreateHost(input, output, scenario);
+        await ConsoleSession.RunAsync(host).WaitAsync(Timeout);
+
+        Assert.Single(scenario.ProfileEmails);
+        Assert.Single(scenario.ProfileCreations);
+        AssertScopesDisposed(scenario);
+        Assert.Contains("Enter a nonblank name", output.ToString());
+        Assert.DoesNotContain("Parameter", output.ToString());
+        Assert.Contains("Profile created", output.ToString());
+    }
+
+    [Theory]
+    [InlineData("n\nb\nq\n")]
+    [InlineData("n\nAlice\nb\nq\n")]
+    [InlineData("n\nq\n")]
+    [InlineData("n\nAlice\n")]
+    public async Task CancelledOrIncompleteFormsDoNotOpenDataScopes(string text)
+    {
+        var scenario = new Scenario();
+        using var host = CreateHost(new ScopeCheckingReader(text, scenario), TextWriter.Null, scenario);
+        await ConsoleSession.RunAsync(host).WaitAsync(Timeout);
+        Assert.Empty(scenario.ProfileStores);
+        Assert.Empty(scenario.Instances);
+    }
+
+    [Fact]
+    public async Task FailedSaveDoesNotSelectAProfileOrAutomaticallyResubmit()
+    {
+        var scenario = new Scenario { FailProfileCreate = true };
+        using var output = new StringWriter();
+        using var input = new ScopeCheckingReader("n\nAlice\nalice@example.com\nq\n", scenario);
+        using var host = CreateHost(input, output, scenario);
+        await ConsoleSession.RunAsync(host).WaitAsync(Timeout);
+
+        Assert.Single(scenario.ProfileCreations);
+        Assert.Empty(scenario.UserRequests);
+        AssertScopesDisposed(scenario);
+        Assert.DoesNotContain("Profile created", output.ToString());
+        Assert.DoesNotContain("private diagnostic", output.ToString());
+        Assert.Contains("Could not confirm profile creation", output.ToString());
+    }
+
+    [Fact]
+    public async Task ShutdownDuringCreationCancelsTheStoreAndDisposesItsScope()
+    {
+        var scenario = new Scenario { BlockProfileCreate = true };
+        using var output = new StringWriter();
+        using var host = CreateHost(new StringReader("n\nAlice\nalice@example.com\n"), output, scenario);
+        var lifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
+        var session = ConsoleSession.RunAsync(host);
+        try
+        {
+            await scenario.ProfileRequestStarted.Task.WaitAsync(Timeout);
+            Assert.DoesNotContain("Profile created", output.ToString());
+        }
+        finally
+        {
+            lifetime.StopApplication();
+        }
+        await session.WaitAsync(Timeout);
+        Assert.True(scenario.ProfileCancellationObserved);
+        AssertScopesDisposed(scenario);
+        Assert.DoesNotContain("Profile created", output.ToString());
+        Assert.DoesNotContain("Error:", output.ToString());
+    }
 
     [Fact]
     public async Task Navigation_uses_a_fresh_scope_for_each_load_and_disposes_it_before_input()
@@ -178,8 +288,10 @@ public sealed class ConsoleSessionTests
             await host.StartAsync();
             Assert.NotNull(host.Services.GetRequiredService<PortfolioConsoleApp>());
             Assert.Throws<InvalidOperationException>(() => host.Services.GetRequiredService<IPortfolioService>());
+            Assert.Throws<InvalidOperationException>(() => host.Services.GetRequiredService<UserService>());
             await using var scope = host.Services.CreateAsyncScope();
             Assert.NotNull(scope.ServiceProvider.GetRequiredService<IPortfolioService>());
+            Assert.NotNull(scope.ServiceProvider.GetRequiredService<UserService>());
             Assert.Same(scope.ServiceProvider.GetRequiredService<GeminoDbContext>(),
                 scope.ServiceProvider.GetRequiredService<GeminoDbContext>());
             Assert.Throws<OptionsValidationException>(() => scope.ServiceProvider.GetRequiredService<IMarketDataProvider>());
@@ -244,12 +356,20 @@ public sealed class ConsoleSessionTests
             builder.Services.RemoveAll<IPortfolioService>();
             builder.Services.AddScoped<IPortfolioService>(provider =>
                 new RecordingService(provider.GetRequiredService<GeminoDbContext>(), scenario));
+            builder.Services.RemoveAll<IUserStore>();
+            builder.Services.AddScoped<IUserStore>(provider =>
+                new RecordingUserStore(provider.GetRequiredService<GeminoDbContext>(), scenario));
         }
         return builder.Build();
     }
 
     private static void AssertScopesDisposed(Scenario scenario)
     {
+        Assert.All(scenario.ProfileStores, instance =>
+        {
+            Assert.True(instance.DisposedAsync);
+            Assert.Throws<ObjectDisposedException>(() => instance.Context.ChangeTracker);
+        });
         Assert.All(scenario.Instances, instance =>
         {
             Assert.True(instance.DisposedAsync);
@@ -263,6 +383,14 @@ public sealed class ConsoleSessionTests
         internal List<Guid> UserRequests { get; } = new();
         internal List<Guid> DetailRequests { get; } = new();
         internal List<RecordingService> Instances { get; } = new();
+        internal List<RecordingUserStore> ProfileStores { get; } = new();
+        internal List<UserDto> ProfileCreations { get; } = new();
+        internal List<string> ProfileEmails { get; } = new();
+        internal bool ExistingEmailOnce { get; set; }
+        internal bool FailProfileCreate { get; init; }
+        internal bool BlockProfileCreate { get; init; }
+        internal bool ProfileCancellationObserved { get; set; }
+        internal TaskCompletionSource ProfileRequestStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource RequestStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal bool FailNextList { get; set; }
         internal bool EmptyList { get; init; }
@@ -320,6 +448,51 @@ public sealed class ConsoleSessionTests
             return Task.FromResult(scenario.MissingDetail ? null : new PortfolioDetailsDto(portfolioId,
                 scenario.UserRequests.Last(), 10m, "Individual", "GBP", "Active", DateTimeOffset.UtcNow,
                 Array.Empty<HoldingDetailsDto>()));
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await Task.Yield();
+            DisposedAsync = true;
+        }
+    }
+
+    private sealed class RecordingUserStore : IUserStore, IAsyncDisposable
+    {
+        private readonly Scenario scenario;
+        internal GeminoDbContext Context { get; }
+        internal bool DisposedAsync { get; private set; }
+
+        internal RecordingUserStore(GeminoDbContext context, Scenario scenario)
+        {
+            Context = context;
+            this.scenario = scenario;
+            scenario.ProfileStores.Add(this);
+        }
+
+        public Task<bool> EmailExistsAsync(string email, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            scenario.ProfileEmails.Add(email);
+            var exists = scenario.ExistingEmailOnce;
+            scenario.ExistingEmailOnce = false;
+            return Task.FromResult(exists);
+        }
+
+        public async Task CreateAsync(Guid userId, string name, string email, CancellationToken cancellationToken = default)
+        {
+            scenario.ProfileCreations.Add(new UserDto(userId, name, email));
+            if (scenario.FailProfileCreate) throw new TimeoutException("private diagnostic");
+            if (scenario.BlockProfileCreate)
+            {
+                scenario.ProfileRequestStarted.TrySetResult();
+                try { await Task.Delay(System.Threading.Timeout.Infinite, cancellationToken); }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    scenario.ProfileCancellationObserved = true;
+                    throw;
+                }
+            }
         }
 
         public async ValueTask DisposeAsync()

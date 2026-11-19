@@ -1,6 +1,5 @@
 using ConsoleApp.Presentation;
 using Sep2026.Application.DTOs;
-using Sep2026.Domain;
 using Xunit;
 
 namespace ConsoleApp.Tests;

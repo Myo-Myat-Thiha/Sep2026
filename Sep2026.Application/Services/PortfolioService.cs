@@ -27,7 +27,6 @@ public sealed class PortfolioService : IPortfolioService
         var portfolio = await repository.GetByIdAsync(portfolioId, cancellationToken);
         if (portfolio is null) return null;
 
-        // These are transport records, separate from the mutable Domain objects.
         var holdings = portfolio.Holdings.Select(holding =>
         {
             var quote = holding.Security.LatestQuote;
@@ -58,7 +57,6 @@ public sealed class PortfolioService : IPortfolioService
         Guid userId,
         CancellationToken cancellationToken = default)
     {
-        //Argument Validation
         if (userId == Guid.Empty)
             throw new ArgumentException("A user ID is required.", nameof(userId));
         cancellationToken.ThrowIfCancellationRequested();

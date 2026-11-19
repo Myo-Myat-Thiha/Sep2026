@@ -33,3 +33,11 @@ active and archived portfolios, descending dates and ascending ID tie-breaks,
 empty results, and selection followed by a complete detail read. SQL command
 capture verifies that the summary operation reads only scalar Portfolio columns
 without joins or relationship loads.
+
+Owner-profile tests cover `SqlServerUserStore`. Offline tests check input guards,
+pre-cancellation, refusing unrelated pending writes, and detaching an attempted
+insertion after an intercepted failure or cancellation. SQL tests verify that the
+Application service saves normalized profile fields and the supplied identity,
+new profiles have no portfolios, email lookup is case-insensitive, and concurrent
+duplicate-email attempts result in one insertion. They also verify preservation
+of existing rows and distinguish email conflicts from duplicate primary keys.

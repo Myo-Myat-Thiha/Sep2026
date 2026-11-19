@@ -10,8 +10,6 @@ namespace Sep2026.Infrastructure.MarketData
     public sealed class MarketDataClient : IMarketDataProvider
     {
         private readonly HttpClient client;
-        private readonly string apiKeyId;
-        private readonly string apiSecretKey;
         private readonly string feed;
         
         public MarketDataClient(
@@ -26,8 +24,6 @@ namespace Sep2026.Infrastructure.MarketData
             ArgumentException.ThrowIfNullOrWhiteSpace(feed, nameof(feed));
 
             this.client = httpClient;
-            this.apiKeyId = apiKeyId;
-            this.apiSecretKey = apiSecretKey;
             this.feed = feed.Trim().ToLowerInvariant();
             httpClient.DefaultRequestHeaders.Add("APCA-API-KEY-ID", apiKeyId);
             httpClient.DefaultRequestHeaders.Add("APCA-API-SECRET-KEY", apiSecretKey);

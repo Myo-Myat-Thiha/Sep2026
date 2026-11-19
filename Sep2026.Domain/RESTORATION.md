@@ -4,7 +4,7 @@ The public constructors create new objects with new IDs and initial defaults.
 The public `Restore(...)` factories preserve existing IDs and state by calling
 private constructors. The same validation protects both construction paths.
 
-Infrastructure will eventually read EF entities and pass their values to these
+Infrastructure reads EF entities and passes their values to these
 factories. Domain does not accept EF entities or depend on EF Core packages.
 
 ## Validate state, then assign it
@@ -36,6 +36,33 @@ saved timestamps, or setting saved collections through business-action methods.
 Invalid saved state produces a validation exception instead of being silently
 corrected or replaced by default values.
 
+## User input and saved values
+
+`UserProfileRules` is the shared owner-profile policy. The Application creation
+procedure uses its normalization methods directly. Normalization methods validate
+their returned values; storage uses validation-only methods to check supplied
+profile fields without changing them. Owner profiles have no separate Domain
+aggregate or restoration factory.
+
+New owner profiles trim surrounding whitespace before
+validation. Names must be nonblank and at most 200 UTF-16 code units; Unicode,
+internal spaces, apostrophes, and hyphens are allowed. Emails must be nonblank
+and at most 254 UTF-16 code units. These limits match the SQL Server `nvarchar`
+columns. Casing is preserved for both fields.
+
+Email validation uses `MailAddress.TryCreate` plus application rules: one plain
+address, no display name, comments, address list, or control characters, and a
+dotted domain with no empty labels. Domain literals and local-only hosts are
+outside this application's accepted email format. This checks syntax, not mailbox
+existence or ownership. Duplicate-email checking belongs to the Application and
+database persistence flow.
+
+The validation-only methods check values as supplied. A name with surrounding
+spaces can remain valid; an email with surrounding spaces is not a plain address
+and is rejected rather than trimmed. Values exceeding field limits are also
+rejected even when trimming could make them fit. `UserProfileRulesTests` check
+normalization, format policy, Unicode names, and length boundaries directly.
+
 ## Example: restore an archived portfolio
 
 ```csharp
@@ -55,16 +82,15 @@ normal operational restrictions remain active after restoration.
 
 ## Collections and relationships
 
-Both User and Portfolio copy incoming collections before keeping them. Clearing
+Portfolio copies its incoming holdings collection before keeping it. Clearing
 or appending to the caller's original list cannot change the restored collection.
 The contained Domain objects are not cloned; their own operations govern changes.
 
-User restoration validates unique portfolio IDs and matching ownership. Portfolio
-restoration validates unique holding IDs and security IDs, matching portfolio
+Portfolio restoration validates unique holding IDs and security IDs, matching portfolio
 IDs, and non-null children. Callers must supply complete loaded collections;
 an empty collection means that no children were loaded into the Domain object.
-The future repository must deliberately load the required relationships before
-claiming to return a complete aggregate.
+`PortfolioRepository` deliberately loads the required relationships before
+returning a complete aggregate.
 
 An empty holding may have zero average purchase price or retain a positive
 historical average. A nonempty holding requires a positive average. Negative
@@ -87,9 +113,9 @@ uppercase codes, and prices and timestamps are validated. Changing a security's
 ticker clears its old quote so the prior instrument's price cannot be reused.
 
 An absent quote means valuation is unknown. A quote with price zero is a known
-zero valuation. The future entity mapper should create a `MarketQuote` from
+zero valuation. `SecurityMapper` creates a `MarketQuote` from
 `Security.CurrentValue`, `CurrencyType`, and `QuoteAt` when cached quote data is
-present, and pass null when it is absent. SQL row versions remain on EF entities.
+present, and passes null when it is absent. SQL row versions remain on EF entities.
 
 ## Verify the restoration contract
 

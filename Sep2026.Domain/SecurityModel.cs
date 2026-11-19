@@ -1,5 +1,3 @@
-using System;
-
 namespace Sep2026.Domain
 {
     public class SecurityModel

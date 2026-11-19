@@ -1,5 +1,4 @@
-﻿using System;
-using System.Globalization;
+﻿using System.Globalization;
 using Sep2026.Application.DTOs;
 
 namespace ConsoleApp.Presentation
@@ -18,8 +17,21 @@ namespace ConsoleApp.Presentation
         {
             ShowHeader("Gemino - Portfolio browser");
             output.WriteLine("Browse saved portfolios and holdings.");
-            output.WriteLine("Enter a user ID from your Gemino database to begin.");
+            output.WriteLine("Enter an existing user ID, or use N to create a portfolio-owner profile.");
             output.WriteLine();
+        }
+
+        public void ShowCreateUser()
+        {
+            ShowHeader("Gemino - Create portfolio-owner profile");
+            output.WriteLine("This creates an owner profile for portfolios.");
+        }
+
+        public void ShowUserCreated(UserDto user)
+        {
+            output.WriteLine($"Profile created: {user.Name}");
+            output.WriteLine($"User ID: {user.UserId}");
+            output.WriteLine($"Email: {user.Email}");
         }
 
         public void ShowLoadingList(Guid userId)

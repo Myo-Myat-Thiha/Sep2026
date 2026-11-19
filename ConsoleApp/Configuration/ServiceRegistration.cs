@@ -9,6 +9,7 @@ using Sep2026.Infrastructure.MarketData;
 using Sep2026.Infrastructure.Persistence;
 using Sep2026.Infrastructure.Persistence.Queries;
 using Sep2026.Infrastructure.Persistence.Repositories;
+using Sep2026.Infrastructure.Persistence.Stores;
 
 namespace ConsoleApp.Configuration;
 
@@ -32,6 +33,8 @@ internal static class ServiceRegistration
         services.AddScoped<IPortfolioRepository, PortfolioRepository>();
         services.AddScoped<IPortfolioQueries, PortfolioQueries>();
         services.AddScoped<IPortfolioService, PortfolioService>();
+        services.AddScoped<IUserStore, SqlServerUserStore>();
+        services.AddScoped<UserService>();
 
         // Saved-data browsing needs no API credentials. These settings are validated
         // when an API-backed feature resolves IMarketDataProvider.

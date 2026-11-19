@@ -1,9 +1,11 @@
-﻿using System;
-using System.Data.Common;
+﻿using System.Data.Common;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Sep2026.Application.DTOs;
+using Sep2026.Application.Exceptions;
 using Sep2026.Application.Interfaces;
+using Sep2026.Application.Services;
+using Sep2026.Domain;
 
 namespace ConsoleApp.Presentation
 {
@@ -37,8 +39,16 @@ namespace ConsoleApp.Presentation
             {
                 while (true)
                 {
-                    var userId = await input.ReadUserIdAsync(cancellationToken);
-                    if (!userId.HasValue) break;
+                    var selection = await input.ReadUserSelectionAsync(cancellationToken);
+                    if (selection.Action == UserAction.Exit) break;
+                    var userId = selection.UserId;
+                    if (selection.Action == UserAction.Create)
+                    {
+                        var creation = await CreateUserAsync(cancellationToken);
+                        if (creation.Action == UserAction.Exit) break;
+                        userId = creation.UserId;
+                    }
+                    if (!userId.HasValue) continue;
 
                     if (await BrowsePortfoliosAsync(userId.Value, cancellationToken) == PortfolioAction.Exit)
                         break;
@@ -50,6 +60,50 @@ namespace ConsoleApp.Presentation
             }
 
             renderer.ShowGoodbye();
+        }
+
+        private async Task<UserSelection> CreateUserAsync(CancellationToken cancellationToken)
+        {
+            renderer.ShowCreateUser();
+            while (true)
+            {
+                // Collect all input before opening the write scope.
+                var form = await input.ReadUserCreationAsync(cancellationToken);
+                if (form.Action != UserAction.Create) return new UserSelection(form.Action);
+                try
+                {
+                    UserDto user;
+                    await using (var scope = scopeFactory.CreateAsyncScope())
+                    {
+                        var service = scope.ServiceProvider.GetRequiredService<UserService>();
+                        user = await service.CreateAsync(form.Name!, form.Email!, cancellationToken);
+                    }
+                    renderer.ShowUserCreated(user);
+                    return new UserSelection(UserAction.Select, user.UserId);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (EmailAlreadyExistsException)
+                {
+                    renderer.ShowError("A profile with this email already exists. Enter a different email or cancel.");
+                }
+                catch (Exception exception) when (exception is ArgumentException or FormatException)
+                {
+                    renderer.ShowError(exception is FormatException
+                        ? "Enter one plain email address with a dotted domain, such as user@example.com."
+                        : $"Enter a nonblank name of up to {UserProfileRules.MaxNameLength} characters " +
+                          $"and an email of up to {UserProfileRules.MaxEmailLength} characters.");
+                }
+                catch (Exception exception)
+                {
+                    logger.LogDebug(exception, "Could not confirm owner profile creation.");
+                    // A lost response can follow a committed write. Never automatically resubmit it.
+                    renderer.ShowError("Could not confirm profile creation. Check saved profiles before trying again.");
+                    return new UserSelection(UserAction.Back);
+                }
+            }
         }
 
         private async Task<PortfolioAction> BrowsePortfoliosAsync(Guid userId, CancellationToken cancellationToken)

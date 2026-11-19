@@ -1,4 +1,3 @@
-using Sep2026.Domain;
 using Xunit;
 
 namespace Sep2026.Domain.Tests;
@@ -19,14 +18,13 @@ public class RestorationTests
         var originalOutput = Console.Out;
         using var messages = new StringWriter();
 
-        UserModel user;
+        PortfolioModel restoredPortfolio;
         try
         {
             Console.SetOut(messages);
             var security = SecurityModel.Restore(securityId, "VOD", "Stock", quote);
             var holding = HoldingModel.Restore(holdingId, security, portfolioId, 10, 20.25m);
-            var portfolio = RestorePortfolio(portfolioId, userId, [holding]);
-            user = UserModel.Restore(userId, "Alice", "alice@example.com", [portfolio]);
+            restoredPortfolio = RestorePortfolio(portfolioId, userId, [holding]);
         }
         finally
         {
@@ -34,10 +32,6 @@ public class RestorationTests
         }
 
         Assert.Equal(string.Empty, messages.ToString());
-        Assert.Equal(userId, user.UserId);
-        Assert.Equal("Alice", user.Name);
-        Assert.Equal("alice@example.com", user.Email);
-        var restoredPortfolio = Assert.Single(user.Portfolios);
         Assert.Equal(portfolioId, restoredPortfolio.PortfolioId);
         Assert.Equal(userId, restoredPortfolio.OwnerId);
         Assert.Equal(1200.345678m, restoredPortfolio.CashBalance);
@@ -62,13 +56,13 @@ public class RestorationTests
     [Fact]
     public void CreatingNewObjectsStillGeneratesIdsAndInitialDefaults()
     {
-        var user = new UserModel("Alice", "alice@example.com");
-        var portfolio = new PortfolioModel(user.UserId);
-        var anotherPortfolio = new PortfolioModel(user.UserId);
+        var ownerId = Guid.NewGuid();
+        var portfolio = new PortfolioModel(ownerId);
+        var anotherPortfolio = new PortfolioModel(ownerId);
         var security = new SecurityModel(" aapl ");
         var holding = new HoldingModel(security, portfolio.PortfolioId);
 
-        Assert.NotEqual(Guid.Empty, user.UserId);
+        Assert.Equal(ownerId, portfolio.OwnerId);
         Assert.NotEqual(Guid.Empty, portfolio.PortfolioId);
         Assert.NotEqual(portfolio.PortfolioId, anotherPortfolio.PortfolioId);
         Assert.NotEqual(Guid.Empty, security.SecurityId);
@@ -208,66 +202,16 @@ public class RestorationTests
     }
 
     [Fact]
-    public void RestorationCopiesBothCollectionBoundaries()
+    public void RestorationCopiesTheHoldingsCollection()
     {
         var userId = Guid.NewGuid();
         var portfolioId = Guid.NewGuid();
         var holding = HoldingModel.Restore(Guid.NewGuid(), new SecurityModel("AAPL"), portfolioId, 0, 0m);
         var holdings = new List<HoldingModel> { holding };
         var portfolio = RestorePortfolio(portfolioId, userId, holdings);
-        var portfolios = new List<PortfolioModel> { portfolio };
-        var user = UserModel.Restore(userId, "Alice", "alice@example.com", portfolios);
-
         holdings.Clear();
-        portfolios.Clear();
 
         Assert.Same(holding, Assert.Single(portfolio.Holdings));
-        Assert.Same(portfolio, Assert.Single(user.Portfolios));
-    }
-
-    [Fact]
-    public void EmptyUserIdentityIsRejected()
-    {
-        Assert.Throws<ArgumentException>(() => UserModel.Restore(
-            Guid.Empty, "Alice", "alice@example.com", []));
-    }
-
-    [Theory]
-    [InlineData("", "alice@example.com")]
-    [InlineData("Alice", " ")]
-    public void BlankUserFieldsAreRejected(string name, string email)
-    {
-        Assert.Throws<ArgumentException>(() => UserModel.Restore(Guid.NewGuid(), name, email, []));
-    }
-
-    [Fact]
-    public void RestorationRetainsUserEmailValidation()
-    {
-        Assert.Throws<FormatException>(() => UserModel.Restore(Guid.NewGuid(), "Alice", "invalid", []));
-    }
-
-    [Fact]
-    public void UserRestorationRejectsMissingPortfolioCollectionsAndEntries()
-    {
-        Assert.Throws<ArgumentNullException>(() => UserModel.Restore(Guid.NewGuid(), "Alice", "alice@example.com", null!));
-        Assert.Throws<ArgumentException>(() => UserModel.Restore(Guid.NewGuid(), "Alice", "alice@example.com", new PortfolioModel[] { null! }));
-    }
-
-    [Fact]
-    public void AUserCannotRestoreSomeoneElsesPortfolio()
-    {
-        var portfolio = RestorePortfolio(Guid.NewGuid(), Guid.NewGuid());
-        Assert.Throws<ArgumentException>(() => UserModel.Restore(Guid.NewGuid(), "Alice", "alice@example.com", [portfolio]));
-    }
-
-    [Fact]
-    public void DuplicatePortfolioIdsAreRejectedForAUser()
-    {
-        var userId = Guid.NewGuid();
-        var portfolioId = Guid.NewGuid();
-        var first = RestorePortfolio(portfolioId, userId);
-        var second = RestorePortfolio(portfolioId, userId);
-        Assert.Throws<ArgumentException>(() => UserModel.Restore(userId, "Alice", "alice@example.com", [first, second]));
     }
 
     [Fact]

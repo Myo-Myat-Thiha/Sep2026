@@ -1,5 +1,6 @@
 namespace Sep2026.Application.DTOs;
 
+
 public sealed record AssetDto(
     Guid AssetId,
     string TickerSymbol,

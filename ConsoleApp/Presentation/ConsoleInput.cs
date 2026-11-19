@@ -1,5 +1,4 @@
-﻿using System;
-using System.Globalization;
+﻿using System.Globalization;
 
 namespace ConsoleApp.Presentation
 {
@@ -16,20 +15,36 @@ namespace ConsoleApp.Presentation
             this.output = output;
         }
 
-        public async Task<Guid?> ReadUserIdAsync(CancellationToken cancellationToken = default)
+        public async Task<UserSelection> ReadUserSelectionAsync(CancellationToken cancellationToken = default)
         {
             while (true)
             {
-                var value = await ReadAsync("Enter user ID (Q to exit): ", cancellationToken);
+                var value = await ReadAsync("Enter user ID, N to create an owner profile, or Q to exit: ", cancellationToken);
                 if (value is null || value.Equals("Q", StringComparison.OrdinalIgnoreCase))
-                    return null;
+                    return new UserSelection(UserAction.Exit);
+                if (value.Equals("N", StringComparison.OrdinalIgnoreCase))
+                    return new UserSelection(UserAction.Create);
 
                 if (Guid.TryParse(value, out var userId) && userId != Guid.Empty)
-                    return userId;
+                    return new UserSelection(UserAction.Select, userId);
 
-                output.WriteLine("Enter a valid, nonempty user ID, for example a GUID copied from Gemino.");
+                output.WriteLine("Enter a valid, nonempty user ID, N to create a profile, or Q to exit.");
             }
         }
+
+        public async Task<UserCreationInput> ReadUserCreationAsync(CancellationToken cancellationToken = default)
+        {
+            output.WriteLine("Enter a name and email. B: Cancel   Q: Exit");
+            var name = await ReadAsync("Name: ", cancellationToken);
+            if (FormAction(name) is { } nameAction) return new UserCreationInput(nameAction);
+            var email = await ReadAsync("Email: ", cancellationToken);
+            if (FormAction(email) is { } emailAction) return new UserCreationInput(emailAction);
+            return new UserCreationInput(UserAction.Create, name, email);
+        }
+
+        private static UserAction? FormAction(string? value)
+            => value is null || value.Equals("Q", StringComparison.OrdinalIgnoreCase) ? UserAction.Exit
+                : value.Equals("B", StringComparison.OrdinalIgnoreCase) ? UserAction.Back : null;
 
         public async Task<PortfolioSelection> ReadPortfolioSelectionAsync(
             int portfolioCount, CancellationToken cancellationToken = default)
@@ -94,6 +109,12 @@ namespace ConsoleApp.Presentation
     }
 
     internal enum PortfolioAction { Select, Reload, ChangeUser, Exit, Back }
+
+    internal enum UserAction { Select, Create, Back, Exit }
+
+    internal readonly record struct UserSelection(UserAction Action, Guid? UserId = null);
+
+    internal readonly record struct UserCreationInput(UserAction Action, string? Name = null, string? Email = null);
 
     internal readonly record struct PortfolioSelection(PortfolioAction Action, int Index = -1);
 }

@@ -12,7 +12,7 @@ public sealed class ConsoleInputTests
         using var output = new StringWriter();
         var input = new ConsoleInput(new StringReader($"bad\n{Guid.Empty}\n {userId} \n"), output);
 
-        Assert.Equal(userId, await input.ReadUserIdAsync());
+        Assert.Equal(new UserSelection(UserAction.Select, userId), await input.ReadUserSelectionAsync());
         Assert.Contains("valid, nonempty user ID", output.ToString());
     }
 
@@ -22,7 +22,7 @@ public sealed class ConsoleInputTests
     public async Task Quit_or_end_of_input_exits_user_lookup(string text)
     {
         var input = new ConsoleInput(new StringReader(text), TextWriter.Null);
-        Assert.Null(await input.ReadUserIdAsync());
+        Assert.Equal(UserAction.Exit, (await input.ReadUserSelectionAsync()).Action);
     }
 
     [Fact]
@@ -31,6 +31,38 @@ public sealed class ConsoleInputTests
         var input = new ConsoleInput(new StringReader("bad\n0\n-1\n3\n2\n"), TextWriter.Null);
         Assert.Equal(new PortfolioSelection(PortfolioAction.Select, 1),
             await input.ReadPortfolioSelectionAsync(2));
+    }
+
+    [Fact]
+    public async Task NewProfileCommandOpensCreationWithoutAnExistingIdentity()
+    {
+        var input = new ConsoleInput(new StringReader(" n \n"), TextWriter.Null);
+        Assert.Equal(new UserSelection(UserAction.Create), await input.ReadUserSelectionAsync());
+    }
+
+    [Fact]
+    public async Task ProfileFormCollectsNameAndEmail()
+    {
+        var input = new ConsoleInput(new StringReader(" Alice \n Alice@Example.COM \n"), TextWriter.Null);
+        var form = await input.ReadUserCreationAsync();
+        Assert.Equal(UserAction.Create, form.Action);
+        Assert.Equal("Alice", form.Name);
+        Assert.Equal("Alice@Example.COM", form.Email);
+    }
+
+    [Theory]
+    [InlineData("b\n", "Back")]
+    [InlineData("q\n", "Exit")]
+    [InlineData("", "Exit")]
+    [InlineData("Alice\nb\n", "Back")]
+    [InlineData("Alice\nq\n", "Exit")]
+    [InlineData("Alice\n", "Exit")]
+    public async Task ProfileFormCanBeCancelledOrEndedBeforeSubmission(string text, string expected)
+    {
+        var input = new ConsoleInput(new StringReader(text), TextWriter.Null);
+        var form = await input.ReadUserCreationAsync();
+        Assert.Equal(expected, form.Action.ToString());
+        Assert.Null(form.Email);
     }
 
     [Fact]
@@ -72,7 +104,7 @@ public sealed class ConsoleInputTests
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         var input = new ConsoleInput(new StringReader("q\n"), TextWriter.Null);
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => input.ReadUserIdAsync(cancellation.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => input.ReadUserSelectionAsync(cancellation.Token));
     }
 
     [Fact]
@@ -81,7 +113,7 @@ public sealed class ConsoleInputTests
         using var reader = new BlockingReader();
         using var cancellation = new CancellationTokenSource();
         var input = new ConsoleInput(reader, TextWriter.Null);
-        var read = input.ReadUserIdAsync(cancellation.Token);
+        var read = input.ReadUserSelectionAsync(cancellation.Token);
         try
         {
             await reader.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));

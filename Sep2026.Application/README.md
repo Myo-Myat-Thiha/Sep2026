@@ -82,6 +82,82 @@ context. Host shutdown cancellation is forwarded into the service. These UI
 actions do not request new market prices and need no Alpaca credentials; API
 configuration is validated when the market data provider is requested.
 
+## Create User contract
+
+`UserService.CreateAsync(string name, string email, CancellationToken cancellationToken)`
+returns `Task<UserDto>`. The inputs are plain parameters; the response is a DTO:
+
+| Type | Direction | Fields |
+| --- | --- | --- |
+| Method parameters | Caller to service | name, email |
+| `UserDto` | Service to caller after a successful save | UserId, Name, Email |
+
+The parameters contain the caller's input. The response includes the generated ID.
+The DTOs carry data. This operation creates a portfolio-owner profile, rather
+than a login account. `UserService` implements it as a Transaction Script using
+shared `UserProfileRules` and does not load portfolios.
+
+## Owner profile creation and storage
+
+The contracts live in `Interfaces`; they do not expose EF entities or DbContext.
+
+| Contract | Operation | Responsibility |
+| --- | --- | --- |
+| `IUserStore` | `Task<bool> EmailExistsAsync(string email, CancellationToken cancellationToken = default)` | Check saved users using the database's case-insensitive email comparison; honor cancellation |
+| `IUserStore` | `Task CreateAsync(Guid userId, string name, string email, CancellationToken cancellationToken = default)` | Insert and save the profile while preserving its ID and supplied values |
+
+The `UserService.CreateAsync` flow is:
+
+1. Reject null fields and requested cancellation. Normalize and validate the
+   name and email through `Domain/UserProfileRules`.
+2. Pass the normalized email to `EmailExistsAsync`; throw `EmailAlreadyExistsException`
+   if it is already saved.
+3. Check cancellation again and generate a GUID.
+4. Await `IUserStore.CreateAsync(userId, name, email, cancellationToken)`, including its save.
+5. Return `UserDto` only after a successful save.
+
+The profile procedure and storage implementation share `UserProfileRules`.
+Normalization returns validated input, while validation-only methods check
+supplied values without changing them.
+
+`Infrastructure/Persistence/Stores/SqlServerUserStore` maps the three parameters into
+the generated EF `User` entity, adds it, and awaits `SaveChangesAsync`. It creates
+no portfolios and performs no authentication or broker calls. A successful insert
+leaves a profile whose portfolio list is initially empty.
+
+`UserService`, `IUserStore`, and `GeminoDbContext` are registered as scoped.
+The console collects the entire form before opening a fresh write scope and
+disposes it before displaying success or requesting more input. The store rejects
+unrelated pending writes, so this operation cannot accidentally commit another
+workflow's changes. Its attempted insertion is detached after success or failure.
+
+Profile creation saves through its focused store. The Portfolio repository remains
+read-only. An alternative device-local store can implement `IUserStore` later;
+database schema, uniqueness semantics, and provider mappings still need review.
+
+`UserStore` is a focused data-access abstraction, similar in role to a repository.
+Here it works with scalar profile fields and saves its insertion immediately;
+the Portfolio repository loads complete Domain portfolios. They use the same
+database. `UserService` is injected directly because it has one implementation;
+`IUserStore` remains the boundary for storage substitution and service tests.
+
+`UserDto` carries the created profile back to the caller. The four portfolio
+response records are grouped in `DTOs/PortfolioDtos.cs` to keep related shapes
+together without changing their public types. EF entities remain in Infrastructure.
+
+The email check is an early response, not a guarantee against simultaneous
+inserts. SQL Server's unique email constraint remains authoritative. The store
+translates SQL Server duplicate-key errors naming `UQ_Users_Email` into
+`EmailAlreadyExistsException`, preserving the `DbUpdateException` as its inner
+exception. Duplicate primary keys and other failures propagate without being
+mislabeled. The service also uses this exception for its early check.
+
+Cancellation is passed into both storage calls. Once the store confirms success,
+the service returns the DTO without a post-save cancellation check. The console
+does not automatically resubmit a failed write: a lost response does not establish
+whether the database committed it. Duplicate or invalid input can be corrected
+by entering a fresh form; other failures return to user selection.
+
 ## Tests
 
 ```powershell
@@ -94,3 +170,7 @@ portfolios, invalid IDs, cancellation forwarding, error propagation, and detache
 read-only results. Summary-list tests verify delegation to queries, forwarded user
 ID and cancellation, empty results, and error propagation without detail loads.
 The Application test project references only Application.
+
+`UserServiceTests` use a fake `IUserStore` to verify validation before persistence,
+normalization, identity preservation, duplicate handling, cancellation, failure
+propagation, and awaiting the lookup and save. No database connection is needed.

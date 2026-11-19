@@ -1,15 +1,15 @@
 # Gemino console presentation
 
-This first console UI uses the existing `IPortfolioService` contracts and DTOs.
-It performs saved-data reads when the user requests them.
+The console UI uses `IPortfolioService` for saved-data reads and `UserService`
+to create portfolio-owner profiles. Authentication remains a separate future feature.
 
 ## Files
 
 | File | Responsibility |
 | --- | --- |
-| `ConsoleInput.cs` | Read user IDs and menu commands; reject invalid values and selections |
+| `ConsoleInput.cs` | Read user selections, profile forms, and menu commands |
 | `PortfolioRenderer.cs` | Render summaries, details, holdings, empty states, and friendly messages |
-| `PortfolioConsoleApp.cs` | Coordinate navigation and resolve the Application service in a fresh scope per load |
+| `PortfolioConsoleApp.cs` | Coordinate creation/navigation and resolve Application services in a fresh scope per operation |
 | `../Configuration/ServiceRegistration.cs` | Register scoped data services, singleton UI, and optional API provider |
 | `../Hosting/ConsoleSession.cs` | Start the host, run the UI with its shutdown token, and always stop the host |
 | `../Program.cs` | Load configuration, enable DI validation, build the host, and run the session |
@@ -27,7 +27,7 @@ From the solution directory, with the existing application configuration:
 dotnet run --project ConsoleApp/ConsoleApp.csproj
 ```
 
-1. Enter a nonempty user GUID from your Gemino database. Enter `Q` to exit.
+1. Enter a nonempty user GUID from Gemino, `N` to create an owner profile, or `Q` to exit.
 2. The application loads that user's saved portfolio summaries, including active
    and archived portfolios, using `IPortfolioService.GetByUserIdAsync`.
 3. Enter a displayed row number to load that portfolio's complete details using
@@ -36,7 +36,8 @@ dotnet run --project ConsoleApp/ConsoleApp.csproj
 
 | Screen | Commands |
 | --- | --- |
-| User lookup | User GUID, or `Q` to exit |
+| User lookup | User GUID, `N` create profile, or `Q` exit |
+| Create owner profile | Enter name/email; `B` cancel or `Q` exit at either field |
 | Portfolio list | Row number, `R` reload list, `U` change user, `Q` exit |
 | Portfolio details | Enter/`B` back, `R` reload saved details, `U` change user, `Q` exit |
 
@@ -44,6 +45,23 @@ Commands are case-insensitive. Invalid input is explained and prompted again.
 End-of-input also exits. Ctrl+C cancels the session and its active request.
 `R` rereads Gemino; it does not request live market prices.
 Entering a different user ID is a development lookup workflow, not authentication.
+
+## Create an owner profile
+
+Choose `N` at the user prompt. Enter a name and email; submitting the email starts
+creation. Blank/invalid fields and duplicate emails show a message and allow
+another form entry. `B` returns to user selection, while `Q` or EOF exits without
+submitting an incomplete form. These command letters are reserved at both fields.
+
+Input is collected before opening a scope. The service trims/validates the fields,
+checks the email, and awaits storage. Only a confirmed save displays the profile
+name, email, and generated user ID. The new profile is selected automatically,
+and the console loads its initially empty portfolio list in a separate scope.
+
+An unexpected write failure returns to user selection without automatically
+retrying. Its outcome may be uncertain, so check saved profiles before submitting
+the same creation again. Technical errors are logged at Debug level; the screen
+shows a friendly message. Ctrl+C cancels an active request and disposes its scope.
 
 ## Displayed data
 
@@ -76,11 +94,11 @@ is requested; the saved-data browser does not need API credentials.
 | Service | Lifetime | Reason |
 | --- | --- | --- |
 | `PortfolioConsoleApp`, `ConsoleInput`, `PortfolioRenderer` | Singleton | One interactive session and its input/output |
-| `IPortfolioService`, repository, queries, `GeminoDbContext` | Scoped | One context for a single data action |
+| `IPortfolioService`, repository, queries, `UserService`, `IUserStore`, `GeminoDbContext` | Scoped | One context for a single data action |
 | `IMarketDataProvider` | Transient typed HTTP client | Constructed on demand by HTTP client factory |
 
-The UI holds `IServiceScopeFactory`. Each list, detail, or reload creates an async
-scope, resolves `IPortfolioService`, awaits the read, and disposes the scope before
+The UI holds `IServiceScopeFactory`. Each create, list, detail, or reload creates an async
+scope, resolves the relevant Application service, awaits the operation, and disposes the scope before
 the next input prompt. Returning to the cached list does not create a scope.
 Only detached DTOs remain while waiting for input. DI scope/build validation is
 enabled in every environment to catch invalid lifetime dependencies early.
@@ -107,3 +125,6 @@ the production registrations with real DI scopes and context construction, but
 execute no SQL or HTTP requests. They cover input validation, navigation, reload,
 changing user, missing/empty results, retry, rendering, API configuration on
 demand, scope disposal before input, and shutdown during input or an active read.
+Profile tests exercise the real Application service with a fake store, covering
+creation and selection, corrections after validation/duplicate failures, incomplete
+forms, uncertain save outcomes, and shutdown during creation.
