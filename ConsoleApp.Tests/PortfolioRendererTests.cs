@@ -7,6 +7,22 @@ namespace ConsoleApp.Tests;
 public sealed class PortfolioRendererTests
 {
     [Fact]
+    public void LoadingAndResultScreensEachClearBeforeDisplayingTheirContents()
+    {
+        using var output = new StringWriter();
+        var clears = 0;
+        var renderer = new PortfolioRenderer(output, () => clears++);
+        var user = new UserDto(Guid.NewGuid(), "Alice", "alice@example.com");
+        renderer.ShowLoadingList(user);
+        renderer.ShowPortfolioList(user, Array.Empty<PortfolioSummaryDto>());
+        renderer.ShowError("Connection failed.");
+        Assert.Equal(3, clears);
+        Assert.Contains("Loading saved portfolios", output.ToString());
+        Assert.Contains("Alice (alice@example.com)", output.ToString());
+        Assert.Contains("No portfolios found", output.ToString());
+        Assert.DoesNotContain(user.UserId.ToString(), output.ToString());
+    }
+    [Fact]
     public void Details_distinguish_unknown_and_zero_quotes_and_preserve_quote_currency_and_time()
     {
         var portfolioId = Guid.NewGuid();
@@ -37,7 +53,7 @@ public sealed class PortfolioRendererTests
     {
         using var output = new StringWriter();
         var renderer = new PortfolioRenderer(output);
-        renderer.ShowPortfolioList(Guid.NewGuid(), Array.Empty<PortfolioSummaryDto>());
+        renderer.ShowPortfolioList(new UserDto(Guid.NewGuid(), "Alice", "alice@example.com"), Array.Empty<PortfolioSummaryDto>());
         renderer.ShowPortfolioDetails(new PortfolioDetailsDto(Guid.NewGuid(), Guid.NewGuid(), 0,
             "Individual", "USD", "Active", DateTimeOffset.UtcNow, Array.Empty<HoldingDetailsDto>()));
 

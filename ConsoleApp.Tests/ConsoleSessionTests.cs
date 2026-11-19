@@ -18,13 +18,70 @@ namespace ConsoleApp.Tests;
 public sealed class ConsoleSessionTests
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
+    private const string Password = "Correct horse battery staple!";
+
+    [Fact]
+    public async Task DetailsThatNoLongerBelongToTheSignedInOwnerAreNotDisplayed()
+    {
+        var scenario = new Scenario { ForeignOwnerDetail = true };
+        using var output = new StringWriter();
+        using var host = CreateHost(new ScopeCheckingReader($"alice@example.com\n{Password}\n1\nq\n", scenario), output, scenario);
+        await ConsoleSession.RunAsync(host).WaitAsync(Timeout);
+        Assert.Single(scenario.DetailRequests);
+        Assert.Contains("was not found", output.ToString());
+        Assert.DoesNotContain("Cash balance:", output.ToString());
+        AssertScopesDisposed(scenario);
+    }
+
+    [Fact]
+    public async Task IncorrectCredentialsNeverLoadPortfolios()
+    {
+        var scenario = new Scenario { RejectSignIn = true };
+        using var output = new StringWriter();
+        using var host = CreateHost(new ScopeCheckingReader($"alice@example.com\n{Password}\nq\n", scenario), output, scenario);
+        await ConsoleSession.RunAsync(host).WaitAsync(Timeout);
+        Assert.Single(scenario.SignInEmails);
+        Assert.Empty(scenario.UserRequests);
+        Assert.Empty(scenario.DetailRequests);
+        Assert.Contains("Email or password is incorrect", output.ToString());
+        Assert.DoesNotContain(Password, output.ToString());
+        AssertScopesDisposed(scenario);
+    }
+
+    [Fact]
+    public async Task InitialSetupReturnsToEmailSignInAndUsesFreshScopes()
+    {
+        var scenario = new Scenario { EmptyList = true };
+        using var output = new StringWriter();
+        using var host = CreateHost(new ScopeCheckingReader($"p\nalice@example.com\n{Password}\n{Password}\nalice@example.com\n{Password}\nq\n", scenario), output, scenario);
+        await ConsoleSession.RunAsync(host).WaitAsync(Timeout);
+        Assert.False(scenario.SetupAllowed);
+        Assert.Equal(2, scenario.ProfileStores.Count);
+        Assert.Single(scenario.UserRequests);
+        Assert.Contains("Password set", output.ToString());
+        Assert.DoesNotContain(Password, output.ToString());
+        AssertScopesDisposed(scenario);
+    }
+
+    [Fact]
+    public async Task SignOutRequiresAnotherPasswordBeforeLoadingAnyMorePortfolios()
+    {
+        var scenario = new Scenario { EmptyList = true };
+        using var output = new StringWriter();
+        using var host = CreateHost(new ScopeCheckingReader($"alice@example.com\n{Password}\nu\nbob@example.com\nwrong\nq\n", scenario), output, scenario);
+        await ConsoleSession.RunAsync(host).WaitAsync(Timeout);
+        Assert.Equal(new[] { "alice@example.com", "bob@example.com" }, scenario.SignInEmails);
+        Assert.Single(scenario.UserRequests);
+        Assert.Contains("Email or password is incorrect", output.ToString());
+        AssertScopesDisposed(scenario);
+    }
 
     [Fact]
     public async Task NewProfileIsCreatedThenSelectedWithSeparateDisposedWriteAndReadScopes()
     {
         var scenario = new Scenario { EmptyList = true };
         using var output = new StringWriter();
-        using var input = new ScopeCheckingReader("n\n Alice \n Alice@Example.COM \nq\n", scenario);
+        using var input = new ScopeCheckingReader($"n\n Alice \n Alice@Example.COM \n{Password}\n{Password}\nq\n", scenario);
         using var host = CreateHost(input, output, scenario);
         await ConsoleSession.RunAsync(host).WaitAsync(Timeout);
 
@@ -36,7 +93,8 @@ public sealed class ConsoleSessionTests
         Assert.NotEqual(scenario.ProfileStores[0].Context.ContextId, Assert.Single(scenario.Instances).Context.ContextId);
         AssertScopesDisposed(scenario);
         Assert.Contains("Profile created: Alice", output.ToString());
-        Assert.Contains(created.UserId.ToString(), output.ToString());
+        Assert.Contains("Alice@Example.COM", output.ToString());
+        Assert.DoesNotContain(Password, output.ToString());
         Assert.Contains("No portfolios found", output.ToString());
     }
 
@@ -45,7 +103,7 @@ public sealed class ConsoleSessionTests
     {
         var scenario = new Scenario { ExistingEmailOnce = true, EmptyList = true };
         using var output = new StringWriter();
-        using var input = new ScopeCheckingReader("n\nAlice\ntaken@example.com\nAlice\nfresh@example.com\nq\n", scenario);
+        using var input = new ScopeCheckingReader($"n\nAlice\ntaken@example.com\n{Password}\n{Password}\nAlice\nfresh@example.com\n{Password}\n{Password}\nq\n", scenario);
         using var host = CreateHost(input, output, scenario);
         await ConsoleSession.RunAsync(host).WaitAsync(Timeout);
 
@@ -62,14 +120,14 @@ public sealed class ConsoleSessionTests
     {
         var scenario = new Scenario { EmptyList = true };
         using var output = new StringWriter();
-        using var input = new ScopeCheckingReader("n\n\nalice@example.com\nAlice\nalice@example.com\nq\n", scenario);
+        using var input = new ScopeCheckingReader($"n\n\nalice@example.com\n{Password}\n{Password}\nAlice\nalice@example.com\n{Password}\n{Password}\nq\n", scenario);
         using var host = CreateHost(input, output, scenario);
         await ConsoleSession.RunAsync(host).WaitAsync(Timeout);
 
         Assert.Single(scenario.ProfileEmails);
         Assert.Single(scenario.ProfileCreations);
         AssertScopesDisposed(scenario);
-        Assert.Contains("Enter a nonblank name", output.ToString());
+        Assert.Contains("Check the name, email, and password", output.ToString());
         Assert.DoesNotContain("Parameter", output.ToString());
         Assert.Contains("Profile created", output.ToString());
     }
@@ -93,7 +151,7 @@ public sealed class ConsoleSessionTests
     {
         var scenario = new Scenario { FailProfileCreate = true };
         using var output = new StringWriter();
-        using var input = new ScopeCheckingReader("n\nAlice\nalice@example.com\nq\n", scenario);
+        using var input = new ScopeCheckingReader($"n\nAlice\nalice@example.com\n{Password}\n{Password}\nq\n", scenario);
         using var host = CreateHost(input, output, scenario);
         await ConsoleSession.RunAsync(host).WaitAsync(Timeout);
 
@@ -110,7 +168,7 @@ public sealed class ConsoleSessionTests
     {
         var scenario = new Scenario { BlockProfileCreate = true };
         using var output = new StringWriter();
-        using var host = CreateHost(new StringReader("n\nAlice\nalice@example.com\n"), output, scenario);
+        using var host = CreateHost(new StringReader($"n\nAlice\nalice@example.com\n{Password}\n{Password}\n"), output, scenario);
         var lifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
         var session = ConsoleSession.RunAsync(host);
         try
@@ -136,7 +194,7 @@ public sealed class ConsoleSessionTests
         var otherUser = Guid.NewGuid();
         var scenario = new Scenario();
         using var output = new StringWriter();
-        using var input = new ScopeCheckingReader($"{user}\n1\nr\nb\nr\nu\n{otherUser}\nq\n", scenario);
+        using var input = new ScopeCheckingReader($"{user:N}@example.com\n{Password}\n1\nr\nb\nr\nu\n{otherUser:N}@example.com\n{Password}\nq\n", scenario);
         using var host = CreateHost(input, output, scenario);
 
         await ConsoleSession.RunAsync(host).WaitAsync(Timeout);
@@ -171,7 +229,7 @@ public sealed class ConsoleSessionTests
     {
         var scenario = new Scenario { FailNextList = true };
         using var output = new StringWriter();
-        using var input = new ScopeCheckingReader($"{Guid.NewGuid()}\nr\nq\n", scenario);
+        using var input = new ScopeCheckingReader($"{Guid.NewGuid():N}@example.com\n{Password}\nr\nq\n", scenario);
         using var host = CreateHost(input, output, scenario);
 
         await ConsoleSession.RunAsync(host).WaitAsync(Timeout);
@@ -188,7 +246,7 @@ public sealed class ConsoleSessionTests
     {
         var scenario = new Scenario { MissingDetail = true };
         using var output = new StringWriter();
-        using var host = CreateHost(new StringReader($"{Guid.NewGuid()}\n1\nq\n"), output, scenario);
+        using var host = CreateHost(new StringReader($"{Guid.NewGuid():N}@example.com\n{Password}\n1\nq\n"), output, scenario);
         await ConsoleSession.RunAsync(host).WaitAsync(Timeout);
         Assert.Contains("was not found", output.ToString());
         Assert.DoesNotContain("Error:", output.ToString());
@@ -196,7 +254,7 @@ public sealed class ConsoleSessionTests
 
         var empty = new Scenario { EmptyList = true };
         using var emptyOutput = new StringWriter();
-        using var emptyHost = CreateHost(new StringReader($"{Guid.NewGuid()}\nq\n"), emptyOutput, empty);
+        using var emptyHost = CreateHost(new StringReader($"{Guid.NewGuid():N}@example.com\n{Password}\nq\n"), emptyOutput, empty);
         await ConsoleSession.RunAsync(emptyHost).WaitAsync(Timeout);
         Assert.Contains("No portfolios found", emptyOutput.ToString());
         Assert.Empty(empty.DetailRequests);
@@ -231,7 +289,7 @@ public sealed class ConsoleSessionTests
     {
         var scenario = new Scenario { BlockList = true };
         using var output = new StringWriter();
-        using var host = CreateHost(new StringReader($"{Guid.NewGuid()}\n"), output, scenario);
+        using var host = CreateHost(new StringReader($"{Guid.NewGuid():N}@example.com\n{Password}\n"), output, scenario);
         var lifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
         var session = ConsoleSession.RunAsync(host);
         try
@@ -254,7 +312,7 @@ public sealed class ConsoleSessionTests
     public async Task External_session_token_also_stops_the_host()
     {
         var scenario = new Scenario { BlockList = true };
-        using var host = CreateHost(new StringReader($"{Guid.NewGuid()}\n"), TextWriter.Null, scenario);
+        using var host = CreateHost(new StringReader($"{Guid.NewGuid():N}@example.com\n{Password}\n"), TextWriter.Null, scenario);
         using var cancellation = new CancellationTokenSource();
         var session = ConsoleSession.RunAsync(host, cancellation.Token);
         try
@@ -395,8 +453,13 @@ public sealed class ConsoleSessionTests
         internal bool FailNextList { get; set; }
         internal bool EmptyList { get; init; }
         internal bool MissingDetail { get; init; }
+        internal bool ForeignOwnerDetail { get; init; }
         internal bool BlockList { get; init; }
         internal bool RequestCancelled { get; set; }
+        internal Guid DefaultUserId { get; } = Guid.NewGuid();
+        internal List<string> SignInEmails { get; } = new();
+        internal bool RejectSignIn { get; init; }
+        internal bool SetupAllowed { get; set; } = true;
     }
 
     private sealed class RecordingService : IPortfolioService, IAsyncDisposable
@@ -446,7 +509,7 @@ public sealed class ConsoleSessionTests
             cancellationToken.ThrowIfCancellationRequested();
             scenario.DetailRequests.Add(portfolioId);
             return Task.FromResult(scenario.MissingDetail ? null : new PortfolioDetailsDto(portfolioId,
-                scenario.UserRequests.Last(), 10m, "Individual", "GBP", "Active", DateTimeOffset.UtcNow,
+                scenario.ForeignOwnerDetail ? Guid.NewGuid() : scenario.UserRequests.Last(), 10m, "Individual", "GBP", "Active", DateTimeOffset.UtcNow,
                 Array.Empty<HoldingDetailsDto>()));
         }
 
@@ -470,6 +533,24 @@ public sealed class ConsoleSessionTests
             scenario.ProfileStores.Add(this);
         }
 
+        public Task<UserDto?> AuthenticateAsync(string email, string password, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            scenario.SignInEmails.Add(email);
+            if (scenario.RejectSignIn || password != Password) return Task.FromResult<UserDto?>(null);
+            var idPart = email.Split('@')[0];
+            var id = Guid.TryParse(idPart, out var userId) ? userId : scenario.DefaultUserId;
+            return Task.FromResult<UserDto?>(new UserDto(id, "Alice", email));
+        }
+
+        public Task<bool> SetInitialPasswordAsync(string email, string password, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var allowed = scenario.SetupAllowed;
+            scenario.SetupAllowed = false;
+            return Task.FromResult(allowed);
+        }
+
         public Task<bool> EmailExistsAsync(string email, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -479,7 +560,7 @@ public sealed class ConsoleSessionTests
             return Task.FromResult(exists);
         }
 
-        public async Task CreateAsync(Guid userId, string name, string email, CancellationToken cancellationToken = default)
+        public async Task CreateAsync(Guid userId, string name, string email, string password, CancellationToken cancellationToken = default)
         {
             scenario.ProfileCreations.Add(new UserDto(userId, name, email));
             if (scenario.FailProfileCreate) throw new TimeoutException("private diagnostic");

@@ -84,17 +84,17 @@ configuration is validated when the market data provider is requested.
 
 ## Create User contract
 
-`UserService.CreateAsync(string name, string email, CancellationToken cancellationToken)`
+`UserService.CreateAsync(string name, string email, string password, CancellationToken cancellationToken)`
 returns `Task<UserDto>`. The inputs are plain parameters; the response is a DTO:
 
 | Type | Direction | Fields |
 | --- | --- | --- |
-| Method parameters | Caller to service | name, email |
+| Method parameters | Caller to service | name, email, password |
 | `UserDto` | Service to caller after a successful save | UserId, Name, Email |
 
 The parameters contain the caller's input. The response includes the generated ID.
-The DTOs carry data. This operation creates a portfolio-owner profile, rather
-than a login account. `UserService` implements it as a Transaction Script using
+The DTOs carry data. This operation creates a portfolio-owner profile
+with a local password. `UserService` implements it as a Transaction Script using
 shared `UserProfileRules` and does not load portfolios.
 
 ## Owner profile creation and storage
@@ -104,16 +104,18 @@ The contracts live in `Interfaces`; they do not expose EF entities or DbContext.
 | Contract | Operation | Responsibility |
 | --- | --- | --- |
 | `IUserStore` | `Task<bool> EmailExistsAsync(string email, CancellationToken cancellationToken = default)` | Check saved users using the database's case-insensitive email comparison; honor cancellation |
-| `IUserStore` | `Task CreateAsync(Guid userId, string name, string email, CancellationToken cancellationToken = default)` | Insert and save the profile while preserving its ID and supplied values |
+| `IUserStore` | `Task CreateAsync(Guid userId, string name, string email, string password, CancellationToken cancellationToken = default)` | Hash the password and save the profile |
+| `IUserStore` | `Task<UserDto?> AuthenticateAsync(string email, string password, CancellationToken cancellationToken = default)` | Return safe profile data after verification, or null |
+| `IUserStore` | `Task<bool> SetInitialPasswordAsync(string email, string password, CancellationToken cancellationToken = default)` | Trusted-device bootstrap, only where a hash is null |
 
 The `UserService.CreateAsync` flow is:
 
 1. Reject null fields and requested cancellation. Normalize and validate the
-   name and email through `Domain/UserProfileRules`.
+   name, email, and password through `Domain/UserProfileRules`. Only name/email are normalized.
 2. Pass the normalized email to `EmailExistsAsync`; throw `EmailAlreadyExistsException`
    if it is already saved.
 3. Check cancellation again and generate a GUID.
-4. Await `IUserStore.CreateAsync(userId, name, email, cancellationToken)`, including its save.
+4. Await `IUserStore.CreateAsync(userId, name, email, password, cancellationToken)`, including hashing and saving.
 5. Return `UserDto` only after a successful save.
 
 The profile procedure and storage implementation share `UserProfileRules`.
@@ -121,8 +123,8 @@ Normalization returns validated input, while validation-only methods check
 supplied values without changing them.
 
 `Infrastructure/Persistence/Stores/SqlServerUserStore` maps the three parameters into
-the generated EF `User` entity, adds it, and awaits `SaveChangesAsync`. It creates
-no portfolios and performs no authentication or broker calls. A successful insert
+the generated EF `User` entity, hashes the password, and awaits `SaveChangesAsync`. It creates
+no portfolios and performs no broker calls. A successful insert
 leaves a profile whose portfolio list is initially empty.
 
 `UserService`, `IUserStore`, and `GeminoDbContext` are registered as scoped.
@@ -144,6 +146,19 @@ database. `UserService` is injected directly because it has one implementation;
 `UserDto` carries the created profile back to the caller. The four portfolio
 response records are grouped in `DTOs/PortfolioDtos.cs` to keep related shapes
 together without changing their public types. EF entities remain in Infrastructure.
+
+`SignInAsync` normalizes email and forwards the exact password; it returns a
+`UserDto` or null. Passwords and hashes never enter DTOs. The SQL store uses the
+standalone Microsoft `PasswordHasher<User>` from `Microsoft.Extensions.Identity.Core`
+with Identity V3 PBKDF2-HMAC-SHA512, random salts, and 210,000 iterations.
+Successful verification can conditionally upgrade an older hash. Missing or
+malformed hashes cannot sign in. This component does not add web registration,
+Identity tables, or JWTs.
+
+New passwords use 15-128 characters and preserve spaces. Initial setup is only
+for legacy null hashes on the trusted device. A conditional update prevents
+concurrent attempts from replacing the winning hash. The console returns to
+sign-in afterward. It is not a password-reset or recovery facility.
 
 The email check is an early response, not a guarantee against simultaneous
 inserts. SQL Server's unique email constraint remains authoritative. The store

@@ -5,15 +5,52 @@ namespace ConsoleApp.Tests;
 
 public sealed class ConsoleInputTests
 {
+    private const string Password = "Correct horse battery staple!";
+
     [Fact]
-    public async Task UserId_reprompts_until_a_nonempty_guid_is_entered()
+    public async Task PasswordInputPreservesSpacesAndDoesNotEchoTheSecret()
+    {
+        using var output = new StringWriter();
+        var input = new ConsoleInput(new StringReader($" {Password} \n"), output);
+        Assert.Equal($" {Password} ", await input.ReadPasswordAsync());
+        Assert.DoesNotContain(Password, output.ToString());
+    }
+
+    [Fact]
+    public async Task NewPasswordRequiresMatchingConfirmation()
+    {
+        using var output = new StringWriter();
+        var input = new ConsoleInput(new StringReader($"short\n{Password}\nmismatch\n{Password}\n{Password}\n"), output);
+        Assert.Equal(Password, await input.ReadNewPasswordAsync());
+        Assert.Contains("length requirement", output.ToString());
+        Assert.Contains("do not match", output.ToString());
+        Assert.DoesNotContain(Password, output.ToString());
+    }
+
+    [Fact]
+    public async Task InitialPasswordCommandIsAvailableWithoutAcceptingAGuid()
+    {
+        var input = new ConsoleInput(new StringReader("p\n"), TextWriter.Null);
+        Assert.Equal(UserAction.SetPassword, (await input.ReadUserSelectionAsync()).Action);
+    }
+
+    [Fact]
+    public async Task FormDiagnosticTextNeverIncludesItsPassword()
+    {
+        var input = new ConsoleInput(new StringReader($"Alice\nalice@example.com\n{Password}\n{Password}\n"), TextWriter.Null);
+        var form = await input.ReadUserCreationAsync();
+        Assert.Equal(Password, form.Password);
+        Assert.DoesNotContain(Password, form.ToString());
+    }
+    [Fact]
+    public async Task SignIn_rejects_guids_and_invalid_emails()
     {
         var userId = Guid.NewGuid();
         using var output = new StringWriter();
-        var input = new ConsoleInput(new StringReader($"bad\n{Guid.Empty}\n {userId} \n"), output);
+        var input = new ConsoleInput(new StringReader($"bad\n{Guid.Empty}\n{userId}\n Alice@example.com \n"), output);
 
-        Assert.Equal(new UserSelection(UserAction.Select, userId), await input.ReadUserSelectionAsync());
-        Assert.Contains("valid, nonempty user ID", output.ToString());
+        Assert.Equal(new UserSelection(UserAction.SignIn, "Alice@example.com"), await input.ReadUserSelectionAsync());
+        Assert.Contains("valid email address", output.ToString());
     }
 
     [Theory]
@@ -43,7 +80,7 @@ public sealed class ConsoleInputTests
     [Fact]
     public async Task ProfileFormCollectsNameAndEmail()
     {
-        var input = new ConsoleInput(new StringReader(" Alice \n Alice@Example.COM \n"), TextWriter.Null);
+        var input = new ConsoleInput(new StringReader($" Alice \n Alice@Example.COM \n{Password}\n{Password}\n"), TextWriter.Null);
         var form = await input.ReadUserCreationAsync();
         Assert.Equal(UserAction.Create, form.Action);
         Assert.Equal("Alice", form.Name);

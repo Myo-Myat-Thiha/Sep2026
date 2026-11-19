@@ -41,17 +41,17 @@ namespace ConsoleApp.Presentation
                 {
                     var selection = await input.ReadUserSelectionAsync(cancellationToken);
                     if (selection.Action == UserAction.Exit) break;
-                    var userId = selection.UserId;
-                    if (selection.Action == UserAction.Create)
+                    var result = selection.Action switch
                     {
-                        var creation = await CreateUserAsync(cancellationToken);
-                        if (creation.Action == UserAction.Exit) break;
-                        userId = creation.UserId;
-                    }
-                    if (!userId.HasValue) continue;
-
-                    if (await BrowsePortfoliosAsync(userId.Value, cancellationToken) == PortfolioAction.Exit)
+                        UserAction.Create => await CreateUserAsync(cancellationToken),
+                        UserAction.SetPassword => await SetInitialPasswordAsync(cancellationToken),
+                        _ => await SignInAsync(selection.Email!, cancellationToken)
+                    };
+                    if (result.Action == UserAction.Exit) break;
+                    if (result.User is null) continue;
+                    if (await BrowsePortfoliosAsync(result.User, cancellationToken) == PortfolioAction.Exit)
                         break;
+                    renderer.ShowWelcome();
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -62,24 +62,29 @@ namespace ConsoleApp.Presentation
             renderer.ShowGoodbye();
         }
 
-        private async Task<UserSelection> CreateUserAsync(CancellationToken cancellationToken)
+        private async Task<(UserAction Action, UserDto? User)> CreateUserAsync(CancellationToken cancellationToken)
         {
             renderer.ShowCreateUser();
             while (true)
             {
                 // Collect all input before opening the write scope.
                 var form = await input.ReadUserCreationAsync(cancellationToken);
-                if (form.Action != UserAction.Create) return new UserSelection(form.Action);
+                if (form.Action != UserAction.Create)
+                {
+                    if (form.Action == UserAction.Back) renderer.ShowWelcome();
+                    return (form.Action, null);
+                }
                 try
                 {
                     UserDto user;
+                    renderer.ShowLoading("Creating owner profile...");
                     await using (var scope = scopeFactory.CreateAsyncScope())
                     {
                         var service = scope.ServiceProvider.GetRequiredService<UserService>();
-                        user = await service.CreateAsync(form.Name!, form.Email!, cancellationToken);
+                        user = await service.CreateAsync(form.Name!, form.Email!, form.Password!, cancellationToken);
                     }
                     renderer.ShowUserCreated(user);
-                    return new UserSelection(UserAction.Select, user.UserId);
+                    return (UserAction.SignIn, user);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
@@ -93,20 +98,82 @@ namespace ConsoleApp.Presentation
                 {
                     renderer.ShowError(exception is FormatException
                         ? "Enter one plain email address with a dotted domain, such as user@example.com."
-                        : $"Enter a nonblank name of up to {UserProfileRules.MaxNameLength} characters " +
-                          $"and an email of up to {UserProfileRules.MaxEmailLength} characters.");
+                        : $"Check the name, email, and password. Use {UserProfileRules.MinPasswordLength}-{UserProfileRules.MaxPasswordLength} password characters.");
                 }
                 catch (Exception exception)
                 {
                     logger.LogDebug(exception, "Could not confirm owner profile creation.");
                     // A lost response can follow a committed write. Never automatically resubmit it.
                     renderer.ShowError("Could not confirm profile creation. Check saved profiles before trying again.");
-                    return new UserSelection(UserAction.Back);
+                    return (UserAction.Back, null);
                 }
             }
         }
 
-        private async Task<PortfolioAction> BrowsePortfoliosAsync(Guid userId, CancellationToken cancellationToken)
+        private async Task<(UserAction Action, UserDto? User)> SignInAsync(string email, CancellationToken cancellationToken)
+        {
+            var password = await input.ReadPasswordAsync(cancellationToken);
+            if (string.IsNullOrEmpty(password))
+            {
+                renderer.ShowWelcome();
+                return (UserAction.Back, null);
+            }
+            renderer.ShowLoading("Signing in...");
+            try
+            {
+                UserDto? user;
+                await using (var scope = scopeFactory.CreateAsyncScope())
+                    user = await scope.ServiceProvider.GetRequiredService<UserService>().SignInAsync(email, password, cancellationToken);
+                if (user is not null) return (UserAction.SignIn, user);
+                renderer.ShowError("Email or password is incorrect. Older profiles without a password need initial setup using P.");
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception exception)
+            {
+                logger.LogDebug(exception, "Could not sign in to the local profile.");
+                renderer.ShowError("Sign-in could not be completed. Check the database connection and try again.");
+            }
+            return (UserAction.Back, null);
+        }
+
+        private async Task<(UserAction Action, UserDto? User)> SetInitialPasswordAsync(CancellationToken cancellationToken)
+        {
+            renderer.ShowPasswordSetup();
+            var selection = await input.ReadPasswordSetupEmailAsync(cancellationToken);
+            if (selection.Action != UserAction.SetPassword)
+            {
+                if (selection.Action == UserAction.Back) renderer.ShowWelcome();
+                return (selection.Action, null);
+            }
+            var password = await input.ReadNewPasswordAsync(cancellationToken);
+            if (password is null)
+            {
+                renderer.ShowWelcome();
+                return (UserAction.Back, null);
+            }
+            renderer.ShowLoading("Setting the initial password...");
+            try
+            {
+                bool saved;
+                await using (var scope = scopeFactory.CreateAsyncScope())
+                    saved = await scope.ServiceProvider.GetRequiredService<UserService>()
+                        .SetInitialPasswordAsync(selection.Email!, password, cancellationToken);
+                renderer.ShowWelcome();
+                renderer.ShowNotice(saved ? "Password set. Sign in with your email and password."
+                    : "Initial setup was not applied. Check the email, or sign in with the password already set.");
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception exception) when (exception is ArgumentException or FormatException)
+            { renderer.ShowError("Enter a valid email and a password that meets the stated length requirement."); }
+            catch (Exception exception)
+            {
+                logger.LogDebug(exception, "Could not confirm initial password setup.");
+                renderer.ShowError("Could not confirm setup. Try signing in before repeating setup.");
+            }
+            return (UserAction.Back, null);
+        }
+
+        private async Task<PortfolioAction> BrowsePortfoliosAsync(UserDto user, CancellationToken cancellationToken)
         {
             IReadOnlyList<PortfolioSummaryDto>? portfolios = null;
             var reload = true;
@@ -115,12 +182,12 @@ namespace ConsoleApp.Presentation
             {
                 if (reload)
                 {
-                    renderer.ShowLoadingList(userId);
+                    renderer.ShowLoadingList(user);
                     try
                     {
                         await using var scope = scopeFactory.CreateAsyncScope();
                         var service = scope.ServiceProvider.GetRequiredService<IPortfolioService>();
-                        portfolios = await service.GetByUserIdAsync(userId, cancellationToken);
+                        portfolios = await service.GetByUserIdAsync(user.UserId, cancellationToken);
                     }
                     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                     {
@@ -129,14 +196,14 @@ namespace ConsoleApp.Presentation
                     catch (Exception exception)
                     {
                         portfolios = null;
-                        ShowLoadError(exception, "portfolio list", userId);
+                        ShowLoadError(exception, "portfolio list", user.UserId);
                     }
                     reload = false;
                 }
 
                 // A failed request stays distinct from a successful empty result.
                 if (portfolios is not null)
-                    renderer.ShowPortfolioList(userId, portfolios);
+                    renderer.ShowPortfolioList(user, portfolios);
 
                 var selection = await input.ReadPortfolioSelectionAsync(portfolios?.Count ?? 0, cancellationToken);
                 switch (selection.Action)
@@ -148,7 +215,7 @@ namespace ConsoleApp.Presentation
                         reload = true;
                         break;
                     case PortfolioAction.Select when portfolios is not null:
-                        var action = await ShowDetailsAsync(portfolios[selection.Index].PortfolioId, cancellationToken);
+                        var action = await ShowDetailsAsync(user.UserId, portfolios[selection.Index].PortfolioId, cancellationToken);
                         if (action is PortfolioAction.Exit or PortfolioAction.ChangeUser)
                             return action;
                         break;
@@ -156,7 +223,7 @@ namespace ConsoleApp.Presentation
             }
         }
 
-        private async Task<PortfolioAction> ShowDetailsAsync(Guid portfolioId, CancellationToken cancellationToken)
+        private async Task<PortfolioAction> ShowDetailsAsync(Guid ownerId, Guid portfolioId, CancellationToken cancellationToken)
         {
             while (true)
             {
@@ -166,7 +233,7 @@ namespace ConsoleApp.Presentation
                     await using var scope = scopeFactory.CreateAsyncScope();
                     var service = scope.ServiceProvider.GetRequiredService<IPortfolioService>();
                     var portfolio = await service.GetByIdAsync(portfolioId, cancellationToken);
-                    if (portfolio is null)
+                    if (portfolio is null || portfolio.OwnerId != ownerId)
                         renderer.ShowMissingPortfolio(portfolioId);
                     else
                         renderer.ShowPortfolioDetails(portfolio);

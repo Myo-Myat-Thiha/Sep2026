@@ -41,3 +41,9 @@ Application service saves normalized profile fields and the supplied identity,
 new profiles have no portfolios, email lookup is case-insensitive, and concurrent
 duplicate-email attempts result in one insertion. They also verify preservation
 of existing rows and distinguish email conflicts from duplicate primary keys.
+
+Password tests verify salted hashes, exact password matching, safe DTO output,
+unknown/legacy/malformed credentials, conditional hash upgrades, and one-time
+setup under concurrency. Migration tests recreate the old Users schema inside
+their own isolated fixture and verify that script `002` preserves users and
+portfolios, is repeatable, and does not reset an initialized password.

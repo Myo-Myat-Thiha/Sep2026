@@ -99,11 +99,14 @@ dotnet run --project ConsoleApp/ConsoleApp.csproj
 
 In Visual Studio, open `Sep2026.slnx` and select `ConsoleApp` as the startup project.
 The console entry point starts the host and launches the portfolio browser.
-Enter a user ID, select a portfolio by number,
-view its holdings, return to the list, reload saved data, change user, or exit.
-Use `N` at the user prompt to create a portfolio-owner profile. Enter its name
-and email; a successful save displays the generated ID and selects the profile.
-New profiles start with an empty portfolio list. `B` cancels the form; `Q` exits.
+Sign in with email and password, then select a portfolio by number,
+view holdings, return to the list, reload saved data, sign out, or exit.
+Use `N` for a profile with a name, email, and confirmed password. New profiles
+start with an empty portfolio list. Existing profiles without a password use
+`P` once on this trusted device, then sign in normally. Initial setup cannot
+replace an existing password. UUIDs remain internal keys. `U` signs out.
+Interactive screens clear before showing loading messages and replace them with
+results; redirected output remains readable without clearing.
 Database reads happen in response to those actions. The screens do not call Alpaca.
 See the [console presentation guide](ConsoleApp/Presentation/README.md) for commands,
 formatting, request scopes, cancellation, and tests. `Q`, end-of-input, and Ctrl+C
@@ -112,11 +115,11 @@ end the session and stop the host.
 ## Console startup and configuration
 
 Owner-profile creation is a small Transaction Script in `UserService`. It reuses
-`UserProfileRules`, generates an ID, and passes the ID, name, and email to `IUserStore` to insert and
-save. `SqlServerUserStore` implements that contract through EF Core and the
+`UserProfileRules`, generates an ID, and passes the profile fields and password to
+`IUserStore`. `SqlServerUserStore` hashes the password and saves through EF Core and the
 existing Users table. The service does not construct a user/portfolio Domain
 graph. The current required-email and case-insensitive uniqueness rules remain
-in effect. This creates owner data for portfolios; login registration is deferred.
+in effect. Sign-in is local to the console session; there is no JWT or remote registration flow.
 See the [Application guide](Sep2026.Application/README.md) for the complete flow.
 
 `ConsoleApp/Program.cs` is the composition root: it loads settings, calls
@@ -175,6 +178,12 @@ console startup selects the Infrastructure implementation. See Microsoft's
 [HTTP client factory guidance](https://learn.microsoft.com/en-us/dotnet/core/extensions/http-client).
 
 ## Database context registration
+
+Existing databases need `Persistence/Sql/002_AddLocalPasswords.sql` before using
+sign-in. It adds nullable `Users.PasswordHash`, preserving existing profiles and
+portfolios without assigning passwords. Fresh databases created by the current
+`001` already include the column. See the
+[SQL setup guide](Sep2026.Infrastructure/Persistence/Sql/README.md).
 
 The application uses one database, `Gemino`, through one context type,
 `GeminoDbContext`. Its five application tables are `Users`, `Portfolios`,

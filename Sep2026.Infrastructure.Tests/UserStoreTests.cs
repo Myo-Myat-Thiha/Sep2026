@@ -1,5 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.Options;
+using System.Text.Json;
 using Sep2026.Application.Exceptions;
 using Sep2026.Application.DTOs;
 using Sep2026.Application.Services;
@@ -13,6 +16,7 @@ namespace Sep2026.Infrastructure.Tests;
 
 public sealed class UserStoreArgumentTests
 {
+    private const string Password = "Correct horse battery staple!";
     [Fact]
     public void RequiresAContext() => Assert.Throws<ArgumentNullException>(() => new SqlServerUserStore(null!));
 
@@ -33,7 +37,7 @@ public sealed class UserStoreArgumentTests
     {
         await using var context = CreateContext();
         await Assert.ThrowsAsync<ArgumentNullException>(() => new SqlServerUserStore(context)
-            .CreateAsync(Guid.NewGuid(), missingName ? null! : "Alice", missingName ? "alice@example.com" : null!));
+            .CreateAsync(Guid.NewGuid(), missingName ? null! : "Alice", missingName ? "alice@example.com" : null!, Password));
         Assert.Empty(context.ChangeTracker.Entries());
     }
 
@@ -42,7 +46,7 @@ public sealed class UserStoreArgumentTests
     {
         await using var context = CreateContext();
         await Assert.ThrowsAsync<ArgumentException>(() => new SqlServerUserStore(context)
-            .CreateAsync(Guid.Empty, "Alice", "alice@example.com"));
+            .CreateAsync(Guid.Empty, "Alice", "alice@example.com", Password));
         Assert.Empty(context.ChangeTracker.Entries());
     }
 
@@ -53,7 +57,9 @@ public sealed class UserStoreArgumentTests
         var store = new SqlServerUserStore(context);
         var token = new CancellationToken(true);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => store.EmailExistsAsync("alice@example.com", token));
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => store.CreateAsync(Guid.NewGuid(), "Alice", "alice@example.com", token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => store.CreateAsync(Guid.NewGuid(), "Alice", "alice@example.com", Password, token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => store.AuthenticateAsync("alice@example.com", Password, token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => store.SetInitialPasswordAsync("alice@example.com", Password, token));
         Assert.Empty(context.ChangeTracker.Entries());
     }
 
@@ -63,7 +69,7 @@ public sealed class UserStoreArgumentTests
         await using var context = CreateContext();
         var pending = new User { UserId = Guid.NewGuid(), Name = "Pending", Email = "pending@example.com" };
         context.Users.Add(pending);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => new SqlServerUserStore(context).CreateAsync(Guid.NewGuid(), "Alice", "alice@example.com"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => new SqlServerUserStore(context).CreateAsync(Guid.NewGuid(), "Alice", "alice@example.com", Password));
         Assert.Same(pending, Assert.Single(context.ChangeTracker.Entries()).Entity);
         Assert.Equal(EntityState.Added, context.Entry(pending).State);
     }
@@ -74,7 +80,7 @@ public sealed class UserStoreArgumentTests
         var failure = new InvalidOperationException("save intercepted");
         await using var context = CreateContext(new SaveFailureInterceptor(failure));
         Assert.Same(failure, await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            new SqlServerUserStore(context).CreateAsync(Guid.NewGuid(), "Alice", "alice@example.com")));
+            new SqlServerUserStore(context).CreateAsync(Guid.NewGuid(), "Alice", "alice@example.com", Password)));
         Assert.Empty(context.ChangeTracker.Entries());
     }
 
@@ -85,7 +91,7 @@ public sealed class UserStoreArgumentTests
         var interceptor = new CancelSavingInterceptor(cancellation);
         await using var context = CreateContext(interceptor);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            new SqlServerUserStore(context).CreateAsync(Guid.NewGuid(), "Alice", "alice@example.com", cancellation.Token));
+            new SqlServerUserStore(context).CreateAsync(Guid.NewGuid(), "Alice", "alice@example.com", Password, cancellation.Token));
         Assert.Equal(cancellation.Token, interceptor.ReceivedToken);
         Assert.Empty(context.ChangeTracker.Entries());
     }
@@ -118,13 +124,116 @@ public sealed class UserStoreArgumentTests
 
 public sealed class UserStoreSqlServerTests(SqlServerFixture fixture) : IClassFixture<SqlServerFixture>
 {
+    private const string Password = "Correct horse battery staple!";
+
+    [SqlServerFact]
+    public async Task PasswordsAreSaltedSignInUsesEmailAndSecretsNeverEnterTheDto()
+    {
+        await using var context = fixture.CreateContext();
+        var store = new SqlServerUserStore(context);
+        var service = new UserService(store);
+        var first = NewUser();
+        var second = NewUser();
+        var spacedPassword = $" {Password} ";
+        await service.CreateAsync(first.Name, first.Email, spacedPassword);
+        await service.CreateAsync(second.Name, second.Email, spacedPassword);
+        var hashes = await context.Users.Where(user => user.Email == first.Email || user.Email == second.Email)
+            .Select(user => user.PasswordHash).ToListAsync();
+        Assert.Equal(2, hashes.Count);
+        Assert.All(hashes, hash => { Assert.False(string.IsNullOrEmpty(hash)); Assert.NotEqual(spacedPassword, hash); });
+        Assert.NotEqual(hashes[0], hashes[1]);
+
+        var signedIn = await service.SignInAsync($" {first.Email.ToUpperInvariant()} ", spacedPassword);
+        Assert.NotNull(signedIn);
+        Assert.Equal(first.Email, signedIn.Email);
+        Assert.Null(await service.SignInAsync(first.Email, Password));
+        Assert.Null(await service.SignInAsync(first.Email, spacedPassword.ToLowerInvariant()));
+        var dtoJson = JsonSerializer.Serialize(signedIn);
+        Assert.DoesNotContain("Password", dtoJson);
+        Assert.DoesNotContain(Password, dtoJson);
+        Assert.Empty(context.ChangeTracker.Entries());
+    }
+
+    [SqlServerFact]
+    public async Task MissingLegacyAndMalformedCredentialsCannotSignIn()
+    {
+        await using var context = fixture.CreateContext();
+        var legacy = new User { UserId = Guid.NewGuid(), Name = "Legacy", Email = $"{Guid.NewGuid():N}@example.com" };
+        var malformed = new User { UserId = Guid.NewGuid(), Name = "Malformed", Email = $"{Guid.NewGuid():N}@example.com", PasswordHash = "not a password hash" };
+        context.Users.AddRange(legacy, malformed);
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+        var store = new SqlServerUserStore(context);
+        Assert.Null(await store.AuthenticateAsync($"{Guid.NewGuid():N}@example.com", Password));
+        Assert.Null(await store.AuthenticateAsync(legacy.Email, Password));
+        Assert.Null(await store.AuthenticateAsync(malformed.Email, Password));
+        Assert.Empty(context.ChangeTracker.Entries());
+    }
+
+    [SqlServerFact]
+    public async Task InitialSetupPreservesTheProfileAndPortfoliosAndCannotReplaceAPassword()
+    {
+        await using var context = fixture.CreateContext();
+        var legacy = new User { UserId = Guid.NewGuid(), Name = "Legacy owner", Email = $"{Guid.NewGuid():N}@example.com" };
+        var portfolio = new Portfolio { PortfolioId = Guid.NewGuid(), OwnerId = legacy.UserId, Owner = legacy };
+        context.Portfolios.Add(portfolio);
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+        var store = new SqlServerUserStore(context);
+        Assert.True(await store.SetInitialPasswordAsync(legacy.Email, Password));
+        Assert.False(await store.SetInitialPasswordAsync(legacy.Email, "A different password phrase!"));
+        Assert.False(await store.SetInitialPasswordAsync($"{Guid.NewGuid():N}@example.com", Password));
+        var signedIn = await store.AuthenticateAsync(legacy.Email, Password);
+        Assert.Equal(legacy.UserId, signedIn!.UserId);
+        Assert.Equal(legacy.Name, signedIn.Name);
+        Assert.Null(await store.AuthenticateAsync(legacy.Email, "A different password phrase!"));
+        Assert.True(await context.Portfolios.AnyAsync(saved => saved.PortfolioId == portfolio.PortfolioId && saved.OwnerId == legacy.UserId));
+    }
+
+    [SqlServerFact]
+    public async Task OnlyOneConcurrentInitialPasswordSetupCanSucceed()
+    {
+        await using var firstContext = fixture.CreateContext();
+        var legacy = new User { UserId = Guid.NewGuid(), Name = "Legacy owner", Email = $"{Guid.NewGuid():N}@example.com" };
+        firstContext.Users.Add(legacy);
+        await firstContext.SaveChangesAsync();
+        firstContext.ChangeTracker.Clear();
+        await using var secondContext = fixture.CreateContext();
+        var firstStore = new SqlServerUserStore(firstContext);
+        var secondStore = new SqlServerUserStore(secondContext);
+        const string otherPassword = "Another password phrase!";
+        var results = await Task.WhenAll(firstStore.SetInitialPasswordAsync(legacy.Email, Password),
+            secondStore.SetInitialPasswordAsync(legacy.Email, otherPassword));
+        Assert.Single(results, saved => saved);
+        Assert.NotNull(await firstStore.AuthenticateAsync(legacy.Email, results[0] ? Password : otherPassword));
+        Assert.Null(await firstStore.AuthenticateAsync(legacy.Email, results[0] ? otherPassword : Password));
+    }
+
+    [SqlServerFact]
+    public async Task OlderHashIsUpgradedOnlyAfterASuccessfulPasswordVerification()
+    {
+        await using var context = fixture.CreateContext();
+        var user = new User { UserId = Guid.NewGuid(), Name = "Owner", Email = $"{Guid.NewGuid():N}@example.com" };
+        var olderHasher = new PasswordHasher<User>(Options.Create(new PasswordHasherOptions { IterationCount = 1000 }));
+        var oldHash = olderHasher.HashPassword(user, Password);
+        user.PasswordHash = oldHash;
+        context.Users.Add(user);
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+        var store = new SqlServerUserStore(context);
+        Assert.Null(await store.AuthenticateAsync(user.Email, "wrong password"));
+        Assert.Equal(oldHash, await context.Users.Where(saved => saved.UserId == user.UserId).Select(saved => saved.PasswordHash).SingleAsync());
+        Assert.NotNull(await store.AuthenticateAsync(user.Email, Password));
+        Assert.NotEqual(oldHash, await context.Users.Where(saved => saved.UserId == user.UserId).Select(saved => saved.PasswordHash).SingleAsync());
+        Assert.NotNull(await store.AuthenticateAsync(user.Email, Password));
+    }
     [SqlServerFact]
     public async Task ServicePersistsANormalizedProfileWithItsSuppliedIdentityAndNoPortfolios()
     {
         await using var context = fixture.CreateContext();
         var email = $"Alice+{Guid.NewGuid():N}@Example.COM";
         var result = await new UserService(new SqlServerUserStore(context))
-            .CreateAsync("  Zoë O'Connor  ", $" {email} ");
+            .CreateAsync("  Zoë O'Connor  ", $" {email} ", Password);
 
         await using var verification = fixture.CreateContext();
         var saved = await verification.Users.AsNoTracking().SingleAsync(user => user.UserId == result.UserId);
@@ -142,7 +251,7 @@ public sealed class UserStoreSqlServerTests(SqlServerFixture fixture) : IClassFi
         await using var context = fixture.CreateContext();
         var store = new SqlServerUserStore(context);
         var data = NewUser();
-        await store.CreateAsync(data.UserId, data.Name, data.Email);
+        await store.CreateAsync(data.UserId, data.Name, data.Email, Password);
         Assert.True(await store.EmailExistsAsync(data.Email.ToUpperInvariant()));
         Assert.True(await store.EmailExistsAsync(data.Email.ToLowerInvariant()));
         Assert.False(await store.EmailExistsAsync($"{Guid.NewGuid():N}@example.com"));
@@ -155,9 +264,9 @@ public sealed class UserStoreSqlServerTests(SqlServerFixture fixture) : IClassFi
         await using var context = fixture.CreateContext();
         var store = new SqlServerUserStore(context);
         var first = NewUser();
-        await store.CreateAsync(first.UserId, first.Name, first.Email);
+        await store.CreateAsync(first.UserId, first.Name, first.Email, Password);
         var second = new UserDto(Guid.NewGuid(), "Other owner", first.Email.ToUpperInvariant());
-        var conflict = await Assert.ThrowsAsync<EmailAlreadyExistsException>(() => store.CreateAsync(second.UserId, second.Name, second.Email));
+        var conflict = await Assert.ThrowsAsync<EmailAlreadyExistsException>(() => store.CreateAsync(second.UserId, second.Name, second.Email, Password));
         Assert.IsType<DbUpdateException>(conflict.InnerException);
         Assert.Empty(context.ChangeTracker.Entries());
         await using var verification = fixture.CreateContext();
@@ -173,9 +282,9 @@ public sealed class UserStoreSqlServerTests(SqlServerFixture fixture) : IClassFi
         await using var context = fixture.CreateContext();
         var store = new SqlServerUserStore(context);
         var first = NewUser();
-        await store.CreateAsync(first.UserId, first.Name, first.Email);
+        await store.CreateAsync(first.UserId, first.Name, first.Email, Password);
         var second = NewUser() with { UserId = first.UserId };
-        await Assert.ThrowsAsync<DbUpdateException>(() => store.CreateAsync(second.UserId, second.Name, second.Email));
+        await Assert.ThrowsAsync<DbUpdateException>(() => store.CreateAsync(second.UserId, second.Name, second.Email, Password));
         Assert.Empty(context.ChangeTracker.Entries());
         Assert.False(await store.EmailExistsAsync(second.Email));
     }
@@ -205,7 +314,7 @@ public sealed class UserStoreSqlServerTests(SqlServerFixture fixture) : IClassFi
     private static UserDto NewUser() => new(Guid.NewGuid(), "Owner", $"Alice+{Guid.NewGuid():N}@Example.COM");
     private static async Task<Exception?> Attempt(SqlServerUserStore store, UserDto data)
     {
-        try { await store.CreateAsync(data.UserId, data.Name, data.Email); return null; }
+        try { await store.CreateAsync(data.UserId, data.Name, data.Email, Password); return null; }
         catch (Exception exception) { return exception; }
     }
 }

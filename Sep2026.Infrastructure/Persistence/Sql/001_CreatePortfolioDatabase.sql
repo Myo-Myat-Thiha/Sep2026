@@ -52,6 +52,7 @@ BEGIN TRY
                 CONSTRAINT [DF_Users_UserId] DEFAULT NEWSEQUENTIALID(),
             [Name] nvarchar(200) NOT NULL,
             [Email] nvarchar(254) COLLATE Latin1_General_100_CI_AS NOT NULL,
+            [PasswordHash] varchar(512) COLLATE Latin1_General_100_BIN2 NULL,
 
             CONSTRAINT [PK_Users] PRIMARY KEY CLUSTERED ([UserId]),
             CONSTRAINT [UQ_Users_Email] UNIQUE ([Email]),

@@ -6,18 +6,26 @@ namespace ConsoleApp.Presentation
     internal sealed class PortfolioRenderer
     {
         private readonly TextWriter output;
+        private readonly Action clearScreen;
 
-        public PortfolioRenderer(TextWriter output)
+        public PortfolioRenderer(TextWriter output, Action? clearScreen = null)
         {
             ArgumentNullException.ThrowIfNull(output);
             this.output = output;
+            this.clearScreen = clearScreen ?? (() =>
+            {
+                if (!ReferenceEquals(output, Console.Out) || Console.IsOutputRedirected) return;
+                try { Console.Clear(); }
+                catch (IOException) { /* Leave readable output on terminals that cannot clear. */ }
+            });
         }
 
         public void ShowWelcome()
         {
             ShowHeader("Gemino - Portfolio browser");
             output.WriteLine("Browse saved portfolios and holdings.");
-            output.WriteLine("Enter an existing user ID, or use N to create a portfolio-owner profile.");
+            output.WriteLine("Sign in with your email and password.");
+            output.WriteLine("N: New profile   P: Set the first password for an existing local profile   Q: Exit");
             output.WriteLine();
         }
 
@@ -29,22 +37,35 @@ namespace ConsoleApp.Presentation
 
         public void ShowUserCreated(UserDto user)
         {
+            ShowHeader("Gemino - Profile created");
             output.WriteLine($"Profile created: {user.Name}");
-            output.WriteLine($"User ID: {user.UserId}");
             output.WriteLine($"Email: {user.Email}");
         }
 
-        public void ShowLoadingList(Guid userId)
+        public void ShowLoading(string message)
+        {
+            ShowHeader("Gemino");
+            output.WriteLine(message);
+        }
+
+        public void ShowPasswordSetup()
+        {
+            ShowHeader("Gemino - Set initial password");
+            output.WriteLine("For existing profiles without a password, on this trusted device only.");
+            output.WriteLine("This cannot replace an existing password. B: Back   Q: Exit");
+        }
+
+        public void ShowLoadingList(UserDto user)
         {
             ShowHeader("Gemino - Portfolios");
-            output.WriteLine($"User: {userId}");
+            output.WriteLine($"Owner: {user.Name} ({user.Email})");
             output.WriteLine("Loading saved portfolios...");
         }
 
-        public void ShowPortfolioList(Guid userId, IReadOnlyList<PortfolioSummaryDto> portfolios)
+        public void ShowPortfolioList(UserDto user, IReadOnlyList<PortfolioSummaryDto> portfolios)
         {
             ShowHeader("Gemino - Portfolios");
-            output.WriteLine($"User: {userId}");
+            output.WriteLine($"Owner: {user.Name} ({user.Email})");
             output.WriteLine();
 
             if (portfolios.Count == 0)
@@ -113,11 +134,18 @@ namespace ConsoleApp.Presentation
 
         public void ShowMissingPortfolio(Guid portfolioId)
         {
+            ShowHeader("Gemino - Portfolio unavailable");
             output.WriteLine($"Portfolio {portfolioId} was not found. It may have been removed since the list was loaded.");
             output.WriteLine("Return to the list and use R to reload it.");
         }
 
-        public void ShowError(string message) => output.WriteLine($"Error: {message}");
+        public void ShowError(string message)
+        {
+            ShowHeader("Gemino - Unable to complete");
+            output.WriteLine($"Error: {message}");
+        }
+
+        public void ShowNotice(string message) => output.WriteLine(message);
 
         public void ShowGoodbye()
         {
@@ -127,6 +155,7 @@ namespace ConsoleApp.Presentation
 
         private void ShowHeader(string title)
         {
+            clearScreen();
             output.WriteLine();
             output.WriteLine(new string('=', 72));
             output.WriteLine(title);

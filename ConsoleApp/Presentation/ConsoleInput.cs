@@ -1,5 +1,8 @@
 ﻿using System.Globalization;
 
+using System.Text;
+using Sep2026.Domain;
+
 namespace ConsoleApp.Presentation
 {
     internal sealed class ConsoleInput
@@ -19,27 +22,79 @@ namespace ConsoleApp.Presentation
         {
             while (true)
             {
-                var value = await ReadAsync("Enter user ID, N to create an owner profile, or Q to exit: ", cancellationToken);
+                var value = await ReadAsync("Email (N: New profile, P: Initial password, Q: Exit): ", cancellationToken);
                 if (value is null || value.Equals("Q", StringComparison.OrdinalIgnoreCase))
                     return new UserSelection(UserAction.Exit);
                 if (value.Equals("N", StringComparison.OrdinalIgnoreCase))
                     return new UserSelection(UserAction.Create);
 
-                if (Guid.TryParse(value, out var userId) && userId != Guid.Empty)
-                    return new UserSelection(UserAction.Select, userId);
-
-                output.WriteLine("Enter a valid, nonempty user ID, N to create a profile, or Q to exit.");
+                if (value.Equals("P", StringComparison.OrdinalIgnoreCase))
+                    return new UserSelection(UserAction.SetPassword);
+                try { return new UserSelection(UserAction.SignIn, UserProfileRules.NormalizeEmail(value)); }
+                catch (Exception exception) when (exception is ArgumentException or FormatException)
+                { output.WriteLine("Enter a valid email address, or N, P, or Q."); }
             }
         }
 
         public async Task<UserCreationInput> ReadUserCreationAsync(CancellationToken cancellationToken = default)
         {
-            output.WriteLine("Enter a name and email. B: Cancel   Q: Exit");
+            output.WriteLine("Enter a name, email, and password. B: Cancel / Q: Exit at name or email.");
             var name = await ReadAsync("Name: ", cancellationToken);
             if (FormAction(name) is { } nameAction) return new UserCreationInput(nameAction);
             var email = await ReadAsync("Email: ", cancellationToken);
             if (FormAction(email) is { } emailAction) return new UserCreationInput(emailAction);
-            return new UserCreationInput(UserAction.Create, name, email);
+            var password = await ReadNewPasswordAsync(cancellationToken);
+            return password is null ? new UserCreationInput(UserAction.Back)
+                : new UserCreationInput(UserAction.Create, name, email, password);
+        }
+
+        public Task<string?> ReadPasswordAsync(CancellationToken cancellationToken = default)
+            => ReadPasswordCoreAsync("Password (blank cancels): ", cancellationToken);
+
+        public async Task<string?> ReadNewPasswordAsync(CancellationToken cancellationToken = default)
+        {
+            while (true)
+            {
+                output.WriteLine($"Use {UserProfileRules.MinPasswordLength}-{UserProfileRules.MaxPasswordLength} characters. Spaces are preserved; a blank password cancels.");
+                var password = await ReadPasswordCoreAsync("New password: ", cancellationToken);
+                if (string.IsNullOrEmpty(password)) return null;
+                try { UserProfileRules.ValidatePassword(password); }
+                catch (ArgumentException) { output.WriteLine("The password does not meet the length requirement."); continue; }
+                var confirmation = await ReadPasswordCoreAsync("Confirm password: ", cancellationToken);
+                if (string.IsNullOrEmpty(confirmation)) return null;
+                if (string.Equals(password, confirmation, StringComparison.Ordinal)) return password;
+                output.WriteLine("Passwords do not match. Please enter them again.");
+            }
+        }
+
+        public async Task<UserSelection> ReadPasswordSetupEmailAsync(CancellationToken cancellationToken = default)
+        {
+            var value = await ReadAsync("Existing profile email: ", cancellationToken);
+            if (FormAction(value) is { } action) return new UserSelection(action);
+            return new UserSelection(UserAction.SetPassword, value);
+        }
+
+        private async Task<string?> ReadPasswordCoreAsync(string prompt, CancellationToken cancellationToken)
+        {
+            if (!ReferenceEquals(input, Console.In) || Console.IsInputRedirected)
+                return await ReadAsync(prompt, cancellationToken, trim: false);
+            cancellationToken.ThrowIfCancellationRequested();
+            output.Write(prompt);
+            var password = new StringBuilder();
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!Console.KeyAvailable) { await Task.Delay(25, cancellationToken); continue; }
+                var key = Console.ReadKey(intercept: true);
+                if (key.Key == ConsoleKey.Enter) { output.WriteLine(); return password.ToString(); }
+                if (key.Key == ConsoleKey.Escape) { output.WriteLine(); return null; }
+                if (key.Key == ConsoleKey.Backspace)
+                {
+                    if (password.Length > 0) password.Length--;
+                }
+                else if (!char.IsControl(key.KeyChar) && password.Length <= UserProfileRules.MaxPasswordLength)
+                    password.Append(key.KeyChar);
+            }
         }
 
         private static UserAction? FormAction(string? value)
@@ -50,7 +105,7 @@ namespace ConsoleApp.Presentation
             int portfolioCount, CancellationToken cancellationToken = default)
         {
             output.WriteLine();
-            output.WriteLine("R: Reload list   U: Change user   Q: Exit");
+            output.WriteLine("R: Reload list   U: Sign out   Q: Exit");
             while (true)
             {
                 var prompt = portfolioCount > 0 ? "Select a portfolio number or command: " : "Choose a command: ";
@@ -77,7 +132,7 @@ namespace ConsoleApp.Presentation
         public async Task<PortfolioAction> ReadDetailActionAsync(CancellationToken cancellationToken = default)
         {
             output.WriteLine();
-            output.WriteLine("Enter/B: Back to list   R: Reload saved details   U: Change user   Q: Exit");
+            output.WriteLine("Enter/B: Back to list   R: Reload saved details   U: Sign out   Q: Exit");
             while (true)
             {
                 var value = await ReadAsync("Choose a command: ", cancellationToken);
@@ -96,7 +151,7 @@ namespace ConsoleApp.Presentation
             }
         }
 
-        private async Task<string?> ReadAsync(string prompt, CancellationToken cancellationToken)
+        private async Task<string?> ReadAsync(string prompt, CancellationToken cancellationToken, bool trim = true)
         {
             cancellationToken.ThrowIfCancellationRequested();
             output.Write(prompt);
@@ -104,17 +159,21 @@ namespace ConsoleApp.Presentation
             // Keep that work off the session thread so shutdown can still complete.
             var read = Task.Run(async () =>
                 await input.ReadLineAsync(cancellationToken).ConfigureAwait(false));
-            return (await read.WaitAsync(cancellationToken))?.Trim();
+            var value = await read.WaitAsync(cancellationToken);
+            return trim ? value?.Trim() : value;
         }
     }
 
     internal enum PortfolioAction { Select, Reload, ChangeUser, Exit, Back }
 
-    internal enum UserAction { Select, Create, Back, Exit }
+    internal enum UserAction { SignIn, Create, SetPassword, Back, Exit }
 
-    internal readonly record struct UserSelection(UserAction Action, Guid? UserId = null);
+    internal readonly record struct UserSelection(UserAction Action, string? Email = null);
 
-    internal readonly record struct UserCreationInput(UserAction Action, string? Name = null, string? Email = null);
+    internal readonly record struct UserCreationInput(UserAction Action, string? Name = null, string? Email = null, string? Password = null)
+    {
+        public override string ToString() => Action.ToString();
+    }
 
     internal readonly record struct PortfolioSelection(PortfolioAction Action, int Index = -1);
 }

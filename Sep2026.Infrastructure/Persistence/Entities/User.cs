@@ -11,5 +11,7 @@ public partial class User
 
     public string Email { get; set; } = null!;
 
+    public string? PasswordHash { get; set; }
+
     public virtual ICollection<Portfolio> Portfolios { get; set; } = new List<Portfolio>();
 }

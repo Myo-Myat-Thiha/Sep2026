@@ -50,6 +50,10 @@ internal spaces, apostrophes, and hyphens are allowed. Emails must be nonblank
 and at most 254 UTF-16 code units. These limits match the SQL Server `nvarchar`
 columns. Casing is preserved for both fields.
 
+New passwords must contain 15-128 characters and must not be blank. They are
+never trimmed or normalized. `ValidatePassword` enforces this policy; hashing
+and verification belong to Infrastructure.
+
 Email validation uses `MailAddress.TryCreate` plus application rules: one plain
 address, no display name, comments, address list, or control characters, and a
 dotted domain with no empty labels. Domain literals and local-only hosts are

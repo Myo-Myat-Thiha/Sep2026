@@ -125,6 +125,10 @@ public partial class GeminoDbContext : DbContext
                 .HasMaxLength(254)
                 .UseCollation("Latin1_General_100_CI_AS");
             entity.Property(e => e.Name).HasMaxLength(200);
+            entity.Property(e => e.PasswordHash)
+                .HasMaxLength(512)
+                .IsUnicode(false)
+                .UseCollation("Latin1_General_100_BIN2");
         });
 
         OnModelCreatingPartial(modelBuilder);

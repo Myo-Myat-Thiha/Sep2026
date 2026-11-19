@@ -5,6 +5,27 @@ namespace Sep2026.Domain.Tests;
 public sealed class UserProfileRulesTests
 {
     [Theory]
+    [InlineData(15)]
+    [InlineData(64)]
+    [InlineData(128)]
+    public void PasswordsAllowPassphrasesAcrossTheSupportedLengthRange(int length)
+        => UserProfileRules.ValidatePassword(new string('a', length));
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("short")]
+    [InlineData("               ")]
+    public void BlankOrShortPasswordsAreRejected(string password)
+        => Assert.Throws<ArgumentException>(() => UserProfileRules.ValidatePassword(password));
+
+    [Fact]
+    public void PasswordsRejectNullAndOversizedValues()
+    {
+        Assert.Throws<ArgumentNullException>(() => UserProfileRules.ValidatePassword(null!));
+        Assert.Throws<ArgumentException>(() => UserProfileRules.ValidatePassword(new string('a', 129)));
+    }
+
+    [Theory]
     [InlineData("Alice O'Connor")]
     [InlineData("မြတ်")]
     [InlineData("Zoë O'Connor-Smith")]

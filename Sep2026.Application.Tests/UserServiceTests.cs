@@ -10,7 +10,72 @@ public sealed class UserServiceTests
 {
     private const string Name = "Alice";
     private const string Email = "Alice@example.com";
+    private const string Password = "Correct horse battery staple!";
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(5);
+
+    [Fact]
+    public async Task InvalidNewPasswordsDoNotAccessStorage()
+    {
+        var store = new StubStore();
+        await Assert.ThrowsAsync<ArgumentException>(() => new UserService(store).CreateAsync(Name, Email, "short"));
+        Assert.Empty(store.Calls);
+    }
+
+    [Fact]
+    public async Task SignInNormalizesEmailButPreservesTheExactPasswordAndToken()
+    {
+        var profile = new UserDto(Guid.NewGuid(), Name, Email);
+        var store = new StubStore { Authentication = (_, _, _) => Task.FromResult<UserDto?>(profile) };
+        using var cancellation = new CancellationTokenSource();
+        var result = await new UserService(store).SignInAsync($" {Email} ", $" {Password} ", cancellation.Token);
+        Assert.Same(profile, result);
+        Assert.Equal(Email, store.CheckedEmail);
+        Assert.Equal($" {Password} ", store.ReceivedPassword);
+        Assert.Equal(cancellation.Token, store.CheckToken);
+        Assert.Equal(new[] { "authenticate" }, store.Calls);
+    }
+
+    [Fact]
+    public async Task FailedSignInReturnsNullAndNeverCreatesAProfile()
+    {
+        var store = new StubStore();
+        Assert.Null(await new UserService(store).SignInAsync(Email, "wrong password"));
+        Assert.Equal(new[] { "authenticate" }, store.Calls);
+        Assert.Null(store.Inserted);
+    }
+
+    [Fact]
+    public async Task EmptyAndOversizedSignInPasswordsDoNotAccessStorage()
+    {
+        var store = new StubStore();
+        var service = new UserService(store);
+        Assert.Null(await service.SignInAsync(Email, ""));
+        Assert.Null(await service.SignInAsync(Email, new string('a', 129)));
+        Assert.Empty(store.Calls);
+    }
+
+    [Fact]
+    public async Task InitialPasswordSetupNormalizesEmailAndForwardsTheSecretAndToken()
+    {
+        var store = new StubStore();
+        using var cancellation = new CancellationTokenSource();
+        Assert.True(await new UserService(store).SetInitialPasswordAsync($" {Email} ", Password, cancellation.Token));
+        Assert.Equal(Email, store.CheckedEmail);
+        Assert.Equal(Password, store.ReceivedPassword);
+        Assert.Equal(cancellation.Token, store.CheckToken);
+        Assert.Equal(new[] { "setup" }, store.Calls);
+    }
+
+    [Fact]
+    public async Task SignInAndSetupHonorPreCancellation()
+    {
+        var store = new StubStore();
+        var service = new UserService(store);
+        var cancelled = new CancellationToken(true);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.SignInAsync(Email, Password, cancelled));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.SetInitialPasswordAsync(Email, Password, cancelled));
+        Assert.Empty(store.Calls);
+    }
 
     [Fact]
     public void RequiresAStore() => Assert.Throws<ArgumentNullException>(() => new UserService(null!));
@@ -22,7 +87,7 @@ public sealed class UserServiceTests
     {
         var store = new StubStore();
         await Assert.ThrowsAsync<ArgumentNullException>(() => new UserService(store)
-            .CreateAsync(missingName ? null! : Name, missingName ? Email : null!));
+            .CreateAsync(missingName ? null! : Name, missingName ? Email : null!, Password));
         Assert.Empty(store.Calls);
     }
 
@@ -32,7 +97,7 @@ public sealed class UserServiceTests
     public async Task RejectsInvalidInputBeforeAccessingStorage(string name, string email, Type expectedException)
     {
         var store = new StubStore();
-        await Assert.ThrowsAsync(expectedException, () => new UserService(store).CreateAsync(name, email));
+        await Assert.ThrowsAsync(expectedException, () => new UserService(store).CreateAsync(name, email, Password));
         Assert.Empty(store.Calls);
     }
 
@@ -41,7 +106,7 @@ public sealed class UserServiceTests
     {
         var store = new StubStore();
         using var cancellation = new CancellationTokenSource();
-        var result = await new UserService(store).CreateAsync("  Zoë O'Connor  ", " Alice+Reports@Example.COM ", cancellation.Token);
+        var result = await new UserService(store).CreateAsync("  Zoë O'Connor  ", " Alice+Reports@Example.COM ", Password, cancellation.Token);
 
         Assert.Equal(new[] { "check", "create" }, store.Calls);
         Assert.Equal("Alice+Reports@Example.COM", store.CheckedEmail);
@@ -56,8 +121,8 @@ public sealed class UserServiceTests
     public async Task GeneratesDifferentIdentitiesForDifferentCreationAttempts()
     {
         var service = new UserService(new StubStore());
-        var first = await service.CreateAsync(Name, Email);
-        var second = await service.CreateAsync("Bob", "bob@example.com");
+        var first = await service.CreateAsync(Name, Email, Password);
+        var second = await service.CreateAsync("Bob", "bob@example.com", Password);
         Assert.NotEqual(first.UserId, second.UserId);
     }
 
@@ -65,7 +130,7 @@ public sealed class UserServiceTests
     public async Task ExistingEmailPreventsInsertion()
     {
         var store = new StubStore { Check = (_, _) => Task.FromResult(true) };
-        await Assert.ThrowsAsync<EmailAlreadyExistsException>(() => new UserService(store).CreateAsync(Name, Email));
+        await Assert.ThrowsAsync<EmailAlreadyExistsException>(() => new UserService(store).CreateAsync(Name, Email, Password));
         Assert.Equal(new[] { "check" }, store.Calls);
     }
 
@@ -74,7 +139,7 @@ public sealed class UserServiceTests
     {
         var failure = new TimeoutException("lookup failed");
         var store = new StubStore { Check = (_, _) => Task.FromException<bool>(failure) };
-        Assert.Same(failure, await Assert.ThrowsAsync<TimeoutException>(() => new UserService(store).CreateAsync(Name, Email)));
+        Assert.Same(failure, await Assert.ThrowsAsync<TimeoutException>(() => new UserService(store).CreateAsync(Name, Email, Password)));
         Assert.Equal(new[] { "check" }, store.Calls);
     }
 
@@ -83,7 +148,7 @@ public sealed class UserServiceTests
     {
         var failure = new InvalidOperationException("save failed");
         var store = new StubStore { Create = (_, _) => Task.FromException(failure) };
-        Assert.Same(failure, await Assert.ThrowsAsync<InvalidOperationException>(() => new UserService(store).CreateAsync(Name, Email)));
+        Assert.Same(failure, await Assert.ThrowsAsync<InvalidOperationException>(() => new UserService(store).CreateAsync(Name, Email, Password)));
         Assert.Equal(new[] { "check", "create" }, store.Calls);
     }
 
@@ -93,7 +158,7 @@ public sealed class UserServiceTests
         var cause = new InvalidOperationException("database conflict");
         var failure = new EmailAlreadyExistsException("Email already saved.", cause);
         var store = new StubStore { Create = (_, _) => Task.FromException(failure) };
-        var result = await Assert.ThrowsAsync<EmailAlreadyExistsException>(() => new UserService(store).CreateAsync(Name, Email));
+        var result = await Assert.ThrowsAsync<EmailAlreadyExistsException>(() => new UserService(store).CreateAsync(Name, Email, Password));
         Assert.Same(failure, result);
         Assert.Same(cause, result.InnerException);
     }
@@ -103,7 +168,7 @@ public sealed class UserServiceTests
     {
         var store = new StubStore();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            new UserService(store).CreateAsync(Name, Email, new CancellationToken(true)));
+            new UserService(store).CreateAsync(Name, Email, Password, new CancellationToken(true)));
         Assert.Empty(store.Calls);
     }
 
@@ -112,7 +177,7 @@ public sealed class UserServiceTests
     {
         using var cancellation = new CancellationTokenSource();
         var store = new StubStore { Check = (_, _) => { cancellation.Cancel(); return Task.FromResult(false); } };
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new UserService(store).CreateAsync(Name, Email, cancellation.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new UserService(store).CreateAsync(Name, Email, Password, cancellation.Token));
         Assert.Equal(new[] { "check" }, store.Calls);
     }
 
@@ -121,7 +186,7 @@ public sealed class UserServiceTests
     {
         using var cancellation = new CancellationTokenSource();
         var store = new StubStore { Create = (_, token) => { cancellation.Cancel(); return Task.FromCanceled(token); } };
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new UserService(store).CreateAsync(Name, Email, cancellation.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new UserService(store).CreateAsync(Name, Email, Password, cancellation.Token));
         Assert.Equal(cancellation.Token, store.CreateToken);
     }
 
@@ -136,7 +201,7 @@ public sealed class UserServiceTests
             Check = (_, _) => lookup.Task,
             Create = (_, _) => { saveStarted.SetResult(); return save.Task; }
         };
-        var creation = new UserService(store).CreateAsync(Name, Email);
+        var creation = new UserService(store).CreateAsync(Name, Email, Password);
         Assert.Equal(new[] { "check" }, store.Calls);
         Assert.False(creation.IsCompleted);
         lookup.SetResult(false);
@@ -151,7 +216,7 @@ public sealed class UserServiceTests
     {
         using var cancellation = new CancellationTokenSource();
         var store = new StubStore { Create = (_, _) => { cancellation.Cancel(); return Task.CompletedTask; } };
-        var result = await new UserService(store).CreateAsync(Name, Email, cancellation.Token);
+        var result = await new UserService(store).CreateAsync(Name, Email, Password, cancellation.Token);
         Assert.Equal(store.Inserted!.UserId, result.UserId);
     }
 
@@ -173,7 +238,7 @@ public sealed class UserServiceTests
             return Check(email, cancellationToken);
         }
 
-        public Task CreateAsync(Guid userId, string name, string email, CancellationToken cancellationToken = default)
+        public Task CreateAsync(Guid userId, string name, string email, string password, CancellationToken cancellationToken = default)
         {
             var user = new UserDto(userId, name, email);
             Calls.Add("create");
@@ -181,5 +246,27 @@ public sealed class UserServiceTests
             CreateToken = cancellationToken;
             return Create(user, cancellationToken);
         }
+
+        public Task<UserDto?> AuthenticateAsync(string email, string password, CancellationToken cancellationToken = default)
+        {
+            Calls.Add("authenticate");
+            CheckedEmail = email;
+            CheckToken = cancellationToken;
+            ReceivedPassword = password;
+            return Authentication(email, password, cancellationToken);
+        }
+
+        public Task<bool> SetInitialPasswordAsync(string email, string password, CancellationToken cancellationToken = default)
+        {
+            Calls.Add("setup");
+            CheckedEmail = email;
+            CheckToken = cancellationToken;
+            ReceivedPassword = password;
+            return Task.FromResult(true);
+        }
+
+        public string? ReceivedPassword { get; private set; }
+        public Func<string, string, CancellationToken, Task<UserDto?>> Authentication { get; init; }
+            = (_, _, _) => Task.FromResult<UserDto?>(null);
     }
 }

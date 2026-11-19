@@ -7,6 +7,16 @@ public static class UserProfileRules
 {
     public const int MaxNameLength = 200;
     public const int MaxEmailLength = 254;
+    public const int MinPasswordLength = 15;
+    public const int MaxPasswordLength = 128;
+
+    public static void ValidatePassword(string password)
+    {
+        ArgumentNullException.ThrowIfNull(password);
+        // Passwords are never trimmed or normalized: spaces are part of the secret.
+        if (string.IsNullOrWhiteSpace(password) || password.Length < MinPasswordLength || password.Length > MaxPasswordLength)
+            throw new ArgumentException($"Use a password between {MinPasswordLength} and {MaxPasswordLength} characters.", nameof(password));
+    }
 
     public static string NormalizeName(string name)
     {

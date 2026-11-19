@@ -20,5 +20,7 @@
     <ProjectReference Include="../Sep2026.Infrastructure/Sep2026.Infrastructure.csproj" />
     <None Include="../Sep2026.Infrastructure/Persistence/Sql/001_CreatePortfolioDatabase.sql"
           Link="Sql/001_CreatePortfolioDatabase.sql" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../Sep2026.Infrastructure/Persistence/Sql/002_AddLocalPasswords.sql"
+          Link="Sql/002_AddLocalPasswords.sql" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

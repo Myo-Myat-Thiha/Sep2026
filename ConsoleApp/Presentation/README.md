@@ -1,7 +1,8 @@
 # Gemino console presentation
 
 The console UI uses `IPortfolioService` for saved-data reads and `UserService`
-to create portfolio-owner profiles. Authentication remains a separate future feature.
+for local sign-in, owner profiles, and initial password setup. The signed-in
+profile lives only in the console session; there is no JWT or remote registration.
 
 ## Files
 
@@ -27,7 +28,8 @@ From the solution directory, with the existing application configuration:
 dotnet run --project ConsoleApp/ConsoleApp.csproj
 ```
 
-1. Enter a nonempty user GUID from Gemino, `N` to create an owner profile, or `Q` to exit.
+1. Enter an email and password, `N` to create a profile, `P` to initialize a legacy
+   profile's password on this trusted device, or `Q` to exit. GUIDs cannot sign in.
 2. The application loads that user's saved portfolio summaries, including active
    and archived portfolios, using `IPortfolioService.GetByUserIdAsync`.
 3. Enter a displayed row number to load that portfolio's complete details using
@@ -36,26 +38,30 @@ dotnet run --project ConsoleApp/ConsoleApp.csproj
 
 | Screen | Commands |
 | --- | --- |
-| User lookup | User GUID, `N` create profile, or `Q` exit |
-| Create owner profile | Enter name/email; `B` cancel or `Q` exit at either field |
-| Portfolio list | Row number, `R` reload list, `U` change user, `Q` exit |
-| Portfolio details | Enter/`B` back, `R` reload saved details, `U` change user, `Q` exit |
+| Sign-in | Email/password; `N` new profile, `P` initial password, `Q` exit at email |
+| Create owner profile | Name/email/password/confirmation; `B` cancel or `Q` exit at name/email |
+| Initial password | Existing email, new password, confirmation; cannot replace a password |
+| Portfolio list | Row number, `R` reload list, `U` sign out, `Q` exit |
+| Portfolio details | Enter/`B` back, `R` reload saved details, `U` sign out, `Q` exit |
 
 Commands are case-insensitive. Invalid input is explained and prompted again.
 End-of-input also exits. Ctrl+C cancels the session and its active request.
 `R` rereads Gemino; it does not request live market prices.
-Entering a different user ID is a development lookup workflow, not authentication.
+Passwords are case-sensitive, are never trimmed, and are hidden during interactive
+entry. Backspace edits and Escape cancels; blank passwords and EOF cancel too.
+Command letters in passwords are literal. New passwords require 15-128 characters
+and matching confirmation; spaces are allowed and preserved.
 
 ## Create an owner profile
 
-Choose `N` at the user prompt. Enter a name and email; submitting the email starts
+Choose `N` at the email prompt. Enter a name, email, password, and confirmation; matching confirmation starts
 creation. Blank/invalid fields and duplicate emails show a message and allow
 another form entry. `B` returns to user selection, while `Q` or EOF exits without
 submitting an incomplete form. These command letters are reserved at both fields.
 
 Input is collected before opening a scope. The service trims/validates the fields,
 checks the email, and awaits storage. Only a confirmed save displays the profile
-name, email, and generated user ID. The new profile is selected automatically,
+name and email. The new profile is selected automatically,
 and the console loads its initially empty portfolio list in a separate scope.
 
 An unexpected write failure returns to user selection without automatically
@@ -64,6 +70,21 @@ the same creation again. Technical errors are logged at Debug level; the screen
 shows a friendly message. Ctrl+C cancels an active request and disposes its scope.
 
 ## Displayed data
+
+Each interactive screen clears before rendering. Reads, sign-in, creation, and
+initial setup show a loading message that is replaced by the result or error.
+Lists identify the owner by name and email. Redirected output and test writers
+are not cleared. Tests can inject a clear callback independently of a terminal.
+
+Sign-in failures use a common message; unknown users, wrong passwords, missing
+hashes, and malformed hashes cannot sign in. `U` drops the session and requires
+another password. Details belonging to another owner are not displayed.
+
+After applying script `002`, legacy profiles have null hashes. `P` sets the first
+password on this trusted device only, then returns to sign-in. A conditional SQL
+update prevents concurrent setup attempts from overwriting each other. This does
+not reset existing passwords. It is local application access control, not database
+encryption: someone controlling the device/database can still access local data.
 
 The list shows portfolio type, currency, cash balance, status, and creation date.
 The detail screen adds portfolio and owner IDs, the full creation timestamp, and
@@ -128,3 +149,6 @@ demand, scope disposal before input, and shutdown during input or an active read
 Profile tests exercise the real Application service with a fake store, covering
 creation and selection, corrections after validation/duplicate failures, incomplete
 forms, uncertain save outcomes, and shutdown during creation.
+Sign-in tests cover non-echoing password entry, confirmation, rejected GUID login,
+incorrect credentials, sign-out, initial setup, and ownership checks. Renderer
+tests verify clearing on loading, result, and error screens.

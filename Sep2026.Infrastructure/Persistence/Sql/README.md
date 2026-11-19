@@ -37,9 +37,23 @@ script; change every occurrence if you choose a different name.
 
 ## Schema choices
 
+For an existing Gemino database, add local-password storage once:
+
+```powershell
+sqlcmd -S ".\SQLEXPRESS" -E -b -i ".\Sep2026.Infrastructure\Persistence\Sql\002_AddLocalPasswords.sql"
+```
+
+Script `002` adds nullable `Users.PasswordHash` as `varchar(512)` with binary
+comparison. It is idempotent, assigns no passwords, and preserves profiles and
+portfolios. Fresh databases created with the current `001` include the column.
+Existing profiles use `P` in the console to set their first password on the
+trusted local device. Non-null hashes cannot be replaced through that workflow.
+No plaintext password column is added. Re-scaffolding after applying the script
+reproduces the nullable property and its mapping.
+
 | Table | Purpose |
 | --- | --- |
-| `Users` | Portfolio owners, with unique email addresses |
+| `Users` | Portfolio owners, unique email addresses, and hashes for local sign-in |
 | `Portfolios` | Cash balance, owner, portfolio type, currency, status, and concurrency token |
 | `Securities` | Security identity and type, with an optional cached market quote |
 | `Holdings` | Whole-share quantities and average purchase prices per portfolio/security |
