@@ -8,6 +8,32 @@ public sealed class ConsoleInputTests
     private const string Password = "Correct horse battery staple!";
 
     [Fact]
+    public async Task LinkFormIsAvailableOnAnEmptyListAndDoesNotEchoCredentials()
+    {
+        using var output = new StringWriter();
+        var input = new ConsoleInput(new StringReader("l\nMy paper account\nprivate-id\nprivate-secret\ny\n"), output);
+        Assert.Equal(PortfolioAction.Link, (await input.ReadPortfolioSelectionAsync(0)).Action);
+        var form = await input.ReadPortfolioLinkAsync();
+        Assert.Equal(PortfolioAction.Link, form.Action);
+        Assert.Equal("My paper account", form.DisplayName);
+        Assert.Equal("private-secret", form.Credentials!.SecretKey);
+        Assert.DoesNotContain("private-id", output.ToString());
+        Assert.DoesNotContain("private-secret", form.ToString());
+    }
+
+    [Theory]
+    [InlineData("b\n")]
+    [InlineData("Name\n\n")]
+    [InlineData("Name\nid\n\n")]
+    [InlineData("Name\nid\nsecret\nn\n")]
+    public async Task CancelledLinkFormNeverReturnsCredentialsForSubmission(string text)
+    {
+        var form = await new ConsoleInput(new StringReader(text), TextWriter.Null).ReadPortfolioLinkAsync();
+        Assert.Equal(PortfolioAction.Back, form.Action);
+        Assert.Null(form.Credentials);
+    }
+
+    [Fact]
     public async Task PasswordInputPreservesSpacesAndDoesNotEchoTheSecret()
     {
         using var output = new StringWriter();
@@ -108,7 +134,7 @@ public sealed class ConsoleInputTests
         using var output = new StringWriter();
         var input = new ConsoleInput(new StringReader("1\nr\n"), output);
         Assert.Equal(PortfolioAction.Reload, (await input.ReadPortfolioSelectionAsync(0)).Action);
-        Assert.Contains("Enter R, U, or Q.", output.ToString());
+        Assert.Contains("Enter L, R, U, or Q.", output.ToString());
     }
 
     [Theory]

@@ -20,4 +20,6 @@ public partial class Security
     public virtual ICollection<Holding> Holdings { get; set; } = new List<Holding>();
 
     public virtual ICollection<MarketPriceSnapshot> MarketPriceSnapshots { get; set; } = new List<MarketPriceSnapshot>();
+
+    public virtual ICollection<ProviderSecurityMapping> ProviderSecurityMappings { get; set; } = new List<ProviderSecurityMapping>();
 }

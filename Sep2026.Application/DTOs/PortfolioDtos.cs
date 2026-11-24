@@ -8,7 +8,9 @@ public sealed record PortfolioSummaryDto(
     CurrencyType CurrencyType,
     decimal CashBalance,
     PortfolioStatus Status,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    string? DisplayName = null,
+    PortfolioConnectionDto? Connection = null);
 
 public sealed record PortfolioDetailsDto(
     Guid PortfolioId,
@@ -18,7 +20,20 @@ public sealed record PortfolioDetailsDto(
     string CurrencyType,
     string Status,
     DateTimeOffset CreatedAt,
-    IReadOnlyList<HoldingDetailsDto> Holdings);
+    IReadOnlyList<HoldingDetailsDto> Holdings,
+    string? DisplayName = null,
+    PortfolioConnectionDto? Connection = null);
+
+public enum ProviderConnectionStatus { Connected, ReauthorizationRequired, Disconnected }
+
+public sealed record PortfolioConnectionDto(
+    InvestmentProvider Provider,
+    ProviderEnvironment Environment,
+    ProviderConnectionStatus Status,
+    DateTimeOffset LastSuccessfulSyncAt,
+    DateTimeOffset FetchStartedAt,
+    DateTimeOffset FetchCompletedAt,
+    DateTimeOffset? ProviderObservedAt);
 
 public sealed record HoldingDetailsDto(
     Guid HoldingId,
@@ -26,8 +41,8 @@ public sealed record HoldingDetailsDto(
     Guid SecurityId,
     string TickerSymbol,
     string SecurityType,
-    int ShareCount,
-    decimal AveragePurchasePrice,
+    decimal ShareCount,
+    decimal? AveragePurchasePrice,
     MarketQuoteDto? LatestQuote);
 
 public sealed record MarketQuoteDto(

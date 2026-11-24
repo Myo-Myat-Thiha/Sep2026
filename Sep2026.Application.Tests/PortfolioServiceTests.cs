@@ -229,6 +229,10 @@ public class PortfolioServiceTests
 
     private sealed class StubPortfolioQueries : IPortfolioQueries
     {
+        public Task<(string? DisplayName, PortfolioConnectionDto? Connection)> GetConnectionAsync(
+            Guid ownerId, Guid portfolioId, CancellationToken cancellationToken = default)
+            => Task.FromResult<(string?, PortfolioConnectionDto?)>((null, null));
+
         public IReadOnlyList<PortfolioSummaryDto> Result { get; init; } = Array.Empty<PortfolioSummaryDto>();
         public Exception? Failure { get; init; }
         public int Calls { get; private set; }

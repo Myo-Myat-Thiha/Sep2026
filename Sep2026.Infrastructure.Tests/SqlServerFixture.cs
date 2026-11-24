@@ -23,6 +23,7 @@ public sealed class SqlServerFixture : IAsyncLifetime
     private string? adminConnectionString;
     private bool ownsDatabase;
     private string databaseConnectionString = string.Empty;
+    public bool IncludeLinkSchema { get; init; } = true;
 
     public async Task InitializeAsync()
     {
@@ -63,6 +64,7 @@ public sealed class SqlServerFixture : IAsyncLifetime
                 command.CommandTimeout = 60;
                 await command.ExecuteNonQueryAsync();
             }
+            if (IncludeLinkSchema) await ApplyScriptAsync("003_LinkPortfolio.sql");
         }
         catch
         {
@@ -74,6 +76,22 @@ public sealed class SqlServerFixture : IAsyncLifetime
     public GeminoDbContext CreateContext(params IInterceptor[] interceptors)
         => new(new DbContextOptionsBuilder<GeminoDbContext>()
             .UseSqlServer(databaseConnectionString).AddInterceptors(interceptors).Options);
+
+    public async Task ApplyScriptAsync(string fileName)
+    {
+        var script = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Sql", fileName));
+        script = script.Replace("Gemino", databaseName, StringComparison.Ordinal);
+        await using var connection = new SqlConnection(databaseConnectionString);
+        await connection.OpenAsync();
+        foreach (var batch in Regex.Split(script, @"^GO\s*$", RegexOptions.Multiline | RegexOptions.IgnoreCase))
+        {
+            if (string.IsNullOrWhiteSpace(batch)) continue;
+            await using var command = connection.CreateCommand();
+            command.CommandText = batch;
+            command.CommandTimeout = 60;
+            await command.ExecuteNonQueryAsync();
+        }
+    }
 
     public async Task DisposeAsync()
     {

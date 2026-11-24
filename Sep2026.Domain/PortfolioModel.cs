@@ -8,7 +8,8 @@ namespace Sep2026.Domain
         Retirement,
         Education,
         Trust,
-        Corporate
+        Corporate,
+        Unspecified = 255
     }
     public enum PortfolioStatus
     {
@@ -66,7 +67,7 @@ namespace Sep2026.Domain
                 throw new ArgumentException("A portfolio ID is required.", nameof(portfolioId));
             if (ownerId == Guid.Empty)
                 throw new ArgumentException("An owner ID is required.", nameof(ownerId));
-            ArgumentOutOfRangeException.ThrowIfNegative(cashBalance);
+            ValidateNonNegative(cashBalance);
             //Enumeration Validation
             if (!Enum.IsDefined(portfolioType))
                 throw new ArgumentOutOfRangeException(nameof(portfolioType));
@@ -130,8 +131,6 @@ namespace Sep2026.Domain
                 throw new InvalidOperationException("Insufficient funds for withdrawal.");
             }
             CashBalance -= cashAmount;
-            //Log the withdrawal action
-            Console.WriteLine($"Withdrew {cashAmount} from portfolio {portfolioId}");
 
         }
 
@@ -143,8 +142,6 @@ namespace Sep2026.Domain
             ValidateGreaterThanZero(depositCashAmount, nameof(depositCashAmount));
 
             CashBalance += depositCashAmount;
-            //Log the deposit action
-            Console.WriteLine($"Deposited {depositCashAmount} into portfolio {portfolioId}");
 
         }
         //
@@ -167,7 +164,7 @@ namespace Sep2026.Domain
             return holdings.FirstOrDefault(h => h.Security.SecurityId == securityId);
         }
 
-        internal void ApplySell(SecurityModel security, int shareQuantity, decimal sellAmount)
+        internal void ApplySell(SecurityModel security, decimal shareQuantity, decimal sellAmount)
         {
             EnsureActive();
 
@@ -185,14 +182,11 @@ namespace Sep2026.Domain
                 throw new InvalidOperationException("Insufficient shares to sell.");
             }
             decimal totalSellValue = shareQuantity * sellAmount;
-            decimal totalCost = shareQuantity * holding.AveragePurchasePrice;
 
             CashBalance += totalSellValue;
-            decimal realizedProfitOrLoss = totalSellValue - totalCost;
             holding.SellShares(shareQuantity);
-            Console.WriteLine($"Sold {shareQuantity} shares of {security.TickerSymbol} for a total of {totalSellValue}. Realized profit/loss: {realizedProfitOrLoss}. New cash balance: {CashBalance}");
         }
-        internal void ApplyBuy(SecurityModel security, int shareQuantity, decimal purchaseAmount)
+        internal void ApplyBuy(SecurityModel security, decimal shareQuantity, decimal purchaseAmount)
         {
             EnsureActive();
 
@@ -210,15 +204,12 @@ namespace Sep2026.Domain
             {
                 var holding = new HoldingModel(security, this.PortfolioId, shareQuantity, purchaseAmount);
                 holdings.Add(holding);
-                Console.WriteLine($"Added new holding for security {security.TickerSymbol} with {shareQuantity} shares at {purchaseAmount} each to portfolio {portfolioId}");
             }
             else
             {
                 existingHolding.BuyShares(shareQuantity, purchaseAmount);
-                Console.WriteLine($"Updated existing holding for security {security.TickerSymbol} with additional {shareQuantity} shares at {purchaseAmount} each in portfolio {portfolioId}");
             }
             CashBalance -= totalCost;
-            Console.WriteLine($"Purchased {shareQuantity} shares of {security.TickerSymbol} for a total of {totalCost}. New cash balance: {CashBalance}");
         }
         public void SetPortfolioType(PortfolioType portfolioType)
         {
@@ -229,7 +220,6 @@ namespace Sep2026.Domain
                 throw new ArgumentOutOfRangeException(nameof(portfolioType),"Invalid portfolio type.");
             }
             PortfolioType = portfolioType;
-            Console.WriteLine($"Portfolio {portfolioId} type set to {portfolioType}");
         }
 
         //This Method is dummy it just gonna change the currency type of the portfolio.
@@ -243,7 +233,6 @@ namespace Sep2026.Domain
                 throw new ArgumentOutOfRangeException(nameof(currencyType),"Invalid currency type.");
             }
             CurrencyType = currencyType;
-            Console.WriteLine($"Portfolio {portfolioId} currency type set to {currencyType}");
         }
 
         public void ReactivatePortfolio()
@@ -253,7 +242,6 @@ namespace Sep2026.Domain
                 throw new InvalidOperationException("Portfolio is already active.");
             }
             Status = PortfolioStatus.Active;
-            Console.WriteLine($"Portfolio {portfolioId} has been reactivated.");
         }
         public void ArchivePortfolio()
         {
@@ -262,7 +250,6 @@ namespace Sep2026.Domain
                 throw new InvalidOperationException("Portfolio is already archived.");
             }
             Status = PortfolioStatus.Archived;
-            Console.WriteLine($"Portfolio {portfolioId} has been archived.");
         }
         private void EnsureActive()
         {

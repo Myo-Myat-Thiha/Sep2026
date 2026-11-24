@@ -2,6 +2,7 @@
 
 using System.Text;
 using Sep2026.Domain;
+using Sep2026.Application.Security;
 
 namespace ConsoleApp.Presentation
 {
@@ -74,6 +75,20 @@ namespace ConsoleApp.Presentation
             return new UserSelection(UserAction.SetPassword, value);
         }
 
+        public async Task<PortfolioLinkInput> ReadPortfolioLinkAsync(CancellationToken cancellationToken = default)
+        {
+            var name = await ReadAsync("Display name (optional; B: Back, Q: Exit): ", cancellationToken);
+            if (FormAction(name) is { } action)
+                return new PortfolioLinkInput(action == UserAction.Exit ? PortfolioAction.Exit : PortfolioAction.Back);
+            var keyId = await ReadPasswordCoreAsync("Paper API key ID (hidden; blank cancels): ", cancellationToken);
+            if (string.IsNullOrWhiteSpace(keyId)) return new(PortfolioAction.Back);
+            var secret = await ReadPasswordCoreAsync("Paper API secret (hidden; blank cancels): ", cancellationToken);
+            if (string.IsNullOrWhiteSpace(secret)) return new(PortfolioAction.Back);
+            var confirmation = await ReadAsync("Link this Alpaca Paper account? Y: Link / Enter: Cancel: ", cancellationToken);
+            if (!string.Equals(confirmation, "Y", StringComparison.OrdinalIgnoreCase)) return new(PortfolioAction.Back);
+            return new(PortfolioAction.Link, name, new ProviderCredentials(keyId, secret));
+        }
+
         private async Task<string?> ReadPasswordCoreAsync(string prompt, CancellationToken cancellationToken)
         {
             if (!ReferenceEquals(input, Console.In) || Console.IsInputRedirected)
@@ -97,6 +112,9 @@ namespace ConsoleApp.Presentation
             }
         }
 
+        public async Task<bool> WaitForContinueAsync(CancellationToken cancellationToken = default)
+            => await ReadAsync("Press Enter to return to the portfolio list: ", cancellationToken) is not null;
+
         private static UserAction? FormAction(string? value)
             => value is null || value.Equals("Q", StringComparison.OrdinalIgnoreCase) ? UserAction.Exit
                 : value.Equals("B", StringComparison.OrdinalIgnoreCase) ? UserAction.Back : null;
@@ -105,7 +123,7 @@ namespace ConsoleApp.Presentation
             int portfolioCount, CancellationToken cancellationToken = default)
         {
             output.WriteLine();
-            output.WriteLine("R: Reload list   U: Sign out   Q: Exit");
+            output.WriteLine("L: Link Portfolio   R: Reload list   U: Sign out   Q: Exit");
             while (true)
             {
                 var prompt = portfolioCount > 0 ? "Select a portfolio number or command: " : "Choose a command: ";
@@ -117,6 +135,7 @@ namespace ConsoleApp.Presentation
                     case "Q": return new PortfolioSelection(PortfolioAction.Exit);
                     case "U": return new PortfolioSelection(PortfolioAction.ChangeUser);
                     case "R": return new PortfolioSelection(PortfolioAction.Reload);
+                    case "L": return new PortfolioSelection(PortfolioAction.Link);
                 }
 
                 if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var number) &&
@@ -124,8 +143,8 @@ namespace ConsoleApp.Presentation
                     return new PortfolioSelection(PortfolioAction.Select, number - 1);
 
                 output.WriteLine(portfolioCount > 0
-                    ? $"Enter a number from 1 to {portfolioCount}, or R, U, or Q."
-                    : "Enter R, U, or Q.");
+                    ? $"Enter a number from 1 to {portfolioCount}, or L, R, U, or Q."
+                    : "Enter L, R, U, or Q.");
             }
         }
 
@@ -164,7 +183,7 @@ namespace ConsoleApp.Presentation
         }
     }
 
-    internal enum PortfolioAction { Select, Reload, ChangeUser, Exit, Back }
+    internal enum PortfolioAction { Select, Reload, ChangeUser, Exit, Back, Link }
 
     internal enum UserAction { SignIn, Create, SetPassword, Back, Exit }
 
@@ -176,4 +195,9 @@ namespace ConsoleApp.Presentation
     }
 
     internal readonly record struct PortfolioSelection(PortfolioAction Action, int Index = -1);
+
+    internal readonly record struct PortfolioLinkInput(PortfolioAction Action, string? DisplayName = null, ProviderCredentials? Credentials = null)
+    {
+        public override string ToString() => Action.ToString();
+    }
 }

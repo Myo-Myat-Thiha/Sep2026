@@ -133,11 +133,19 @@ Every cash/holding synchronization must also update the portfolio row in the sam
 transaction. Updating a holding alone does not advance the portfolio row version.
 Holding insertion conflicts may surface as unique-constraint violations.
 
-When broker synchronization is introduced, save the related portfolio and holding
-changes using one shared database transaction. The broker remains authoritative
-for account executions and balances; a successful order-submission response alone
-must not be treated as a filled order. Perform external API calls outside the local
-database transaction and reconcile confirmed broker events with local state.
+The [connected portfolio scope](../../../docs/CONNECTED_PORTFOLIO_SCOPE.md) defines
+the next write workflow as importing an external account's financial snapshot.
+Fetch and validate the complete external result outside the local transaction,
+then save cash, holdings, synchronization metadata, and portfolio concurrency
+state together. The provider remains authoritative. A local transaction makes
+the local update atomic, not the separate external reads.
+
+Do not interpret a failed or incomplete positions request as an empty account.
+Use synchronization ordering/concurrency checks to prevent older results from
+overwriting newer accepted state. Provider connections, external-account identity,
+and synchronization metadata need a separately versioned schema change before
+scaffolding. Current integer share counts, nonnegative balances, and required
+nonempty cost basis also need an explicit compatibility review.
 
 The script does not install trading workflows, broker order/execution tables,
 triggers, or stored procedures to synchronize balances. Those can be designed

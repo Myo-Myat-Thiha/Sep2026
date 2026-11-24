@@ -51,6 +51,109 @@ currency conversion, portfolio totals, writes, or broker calls are performed by
 this read use case. Quote timestamps describe the saved observation, not the time
 the DTO was requested. API refresh can be added as a separate explicit use case.
 
+## Updated scope: external account connections
+
+The next portfolio feature is **Link Portfolio**: authorize a selected
+provider account and import its existing state. See the
+[connected portfolio scope](../docs/CONNECTED_PORTFOLIO_SCOPE.md). The contracts
+above still describe current saved-data reads. `LinkPortfolioService` and its
+Application contracts are now implemented and tested with fake dependencies.
+The [implementation plan](../docs/LINK_PORTFOLIO_IMPLEMENTATION_PLAN.md) tracks the
+remaining provider adapter, storage/schema, console, and refresh work.
+
+Keep local profile creation/sign-in separate from provider authorization. Future
+Application services should coordinate linking and synchronization, enforce owner
+access, and expose safe connection/freshness DTOs. Infrastructure should supply
+provider-specific adapters, secret access, and transactional snapshot persistence.
+`IMarketDataProvider` currently supplies public/reference market information; it
+does not authorize access to an owner's private account.
+
+Initial import and refresh must map validated external cash/position state
+directly rather than replaying deposits or trades. Preserve the previous accepted
+snapshot on failure. Review current integer quantities, nonnegative balances,
+required cost basis, and limited account-type mappings before importing provider
+data. These are compatibility requirements, not assumptions that all external
+accounts satisfy the current Domain constructors.
+
+## Link Portfolio Application service
+
+The concrete service follows the existing `UserService` convention:
+
+```csharp
+Task<LinkPortfolioResultDto> LinkAsync(
+    Guid ownerId,
+    LinkPortfolioRequest request,
+    ProviderCredentials authorization,
+    CancellationToken cancellationToken = default);
+```
+
+The trusted host supplies the signed-in owner ID. Checking that an owner exists
+does not authenticate an arbitrary caller-supplied ID. A future API must supply
+the ID from its authenticated context. The service never accepts a typed external
+account ID as authorization.
+
+| Type / contract | Purpose |
+| --- | --- |
+| `LinkPortfolioRequest` | Provider, environment, optional display name; no secrets |
+| `ProviderCredentials` | Separate transient key/secret input, exact values preserved, redacted `ToString()` |
+| `ExternalPortfolioSnapshotDto` / `ExternalPositionDto` | Complete provider-neutral financial read with fetch interval; decimal quantities and nullable cost |
+| `InitialPortfolioImport` | Accepted snapshot, generated portfolio/connection IDs, owner, and opaque credential reference for one atomic initial save |
+| `LinkPortfolioResultDto` / `LinkedPortfolioDto` | Linked/AlreadyLinked outcome and safe saved identity/freshness; no secret or credential reference |
+| `IInvestmentAccountProvider` | Verify external identity, then obtain its complete snapshot |
+| `ILinkedPortfolioStore` | Check owner, find an owner-scoped link, acquire its account lock, and atomically create the import |
+| `IProviderCredentialStore` | Save/delete owner-scoped protected credentials by generated reference |
+
+`LinkPortfolioDtos.cs` groups the related data records and enums; secret input is
+a separate non-record type under `Security`. No EF, HTTP, provider JSON, or new
+NuGet dependency is introduced into Application.
+
+The implemented workflow is:
+
+1. Validate the owner ID, Alpaca/Paper selection, and display name (trimmed,
+   optional, maximum 200 characters); require an existing owner profile.
+2. Verify external identity using the provider, then check for an existing link.
+3. Acquire an account lock and check again to handle concurrent linking.
+4. Read and validate a complete snapshot of that account. Copy accepted positions
+   into a read-only collection so later source mutation cannot change the import.
+5. Stage protected credentials and pass the full initial import to the store.
+6. Return only after confirmed persistence; an existing link keeps its old name
+   and credential. No deposit or trading business operation is replayed.
+
+Current import policy is USD, nonnegative cash, and positive long US-equity
+positions. Quantity must fit `decimal(28,9)`; money/cost must fit `decimal(19,8)`
+without rounding. Unknown cost remains null and reported zero cost remains zero.
+Reject incomplete snapshots, mismatched identities, duplicate assets/symbols,
+unsupported state, and fetch intervals older than two minutes or in the future.
+Fetch time is local collection metadata, not a claim of an atomic provider read.
+External identifiers are opaque, case-sensitive values up to 200 characters.
+
+If credential staging fails or the store confirms no commit through
+`PortfolioLinkNotCommittedException`, delete only this attempt's reference using
+an independent bounded cleanup token. The credential store's delete must be
+idempotent. Preserve both the original error and cleanup error if both occur.
+
+Other save failures, including cancellation after save begins, have an uncertain
+commit outcome. Perform a bounded owner-scoped lookup with an independent token.
+If the attempted portfolio is found, return Linked and retain its credential;
+if another existing link won, return AlreadyLinked and clean the unused reference.
+If no result can be established, throw `PortfolioLinkCommitUnknownException` and
+retain the reference for reconciliation. Never blindly delete possibly committed
+credentials or throw cancellation after confirmed success. Recovery and cleanup
+each allow up to five seconds and require adapters to honor cancellation.
+
+The future store must enforce uniqueness, owner matching, lock ownership and
+concurrency in the database. `IPortfolioLinkLock.LostToken` cancels active work;
+the store must also check ownership at commit. Lock disposal must not mask a
+confirmed result. The Application tests simulate these boundaries, not SQL
+transactions or device encryption.
+
+**Integration status:** the provider, protected credential store, SQL store, and
+account lock have contracts but no production implementations yet. The existing
+Domain/SQL whole-share and non-null-cost models are unchanged and must be updated
+before implementing the import store. `LinkPortfolioService` is not registered
+in the console DI container until its implementations exist. No live account
+request, schema modification, or console Link Portfolio action is enabled yet.
+
 ## Dependency injection and usage
 
 `ConsoleApp/Program.cs` calls `Configuration/ServiceRegistration.cs` to register
@@ -189,3 +292,10 @@ The Application test project references only Application.
 `UserServiceTests` use a fake `IUserStore` to verify validation before persistence,
 normalization, identity preservation, duplicate handling, cancellation, failure
 propagation, and awaiting the lookup and save. No database connection is needed.
+
+`LinkPortfolioServiceTests` use fake account/SQL/credential contracts and a fixed
+clock. They cover fractional/unknown/zero-cost data, complete empty accounts,
+input and snapshot rejection, owner isolation, duplicate links, immutable import
+collections, asynchronous commit confirmation, lock loss, cancellation, cleanup,
+and recovery after uncertain commits. They make no SQL, credential-vault, or
+external provider calls.

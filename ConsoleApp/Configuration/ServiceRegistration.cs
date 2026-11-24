@@ -5,6 +5,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Sep2026.Application.Interfaces;
 using Sep2026.Application.Services;
+using Sep2026.Application.Policies;
+using Sep2026.Infrastructure.AccountProviders;
+using Sep2026.Infrastructure.CredentialStorage;
 using Sep2026.Infrastructure.MarketData;
 using Sep2026.Infrastructure.Persistence;
 using Sep2026.Infrastructure.Persistence.Queries;
@@ -35,6 +38,15 @@ internal static class ServiceRegistration
         services.AddScoped<IPortfolioService, PortfolioService>();
         services.AddScoped<IUserStore, SqlServerUserStore>();
         services.AddScoped<UserService>();
+        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton<PortfolioImportPolicy>();
+        services.AddScoped<ILinkedPortfolioStore, SqlServerLinkedPortfolioStore>();
+        services.AddSingleton<IProviderCredentialStore, WindowsProviderCredentialStore>();
+        services.AddScoped<LinkPortfolioService>();
+        services.AddHttpClient<IInvestmentAccountProvider, AlpacaAccountClient>(client =>
+            client.Timeout = TimeSpan.FromSeconds(30))
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false })
+            .RedactLoggedHeaders(_ => true);
 
         // Saved-data browsing needs no API credentials. These settings are validated
         // when an API-backed feature resolves IMarketDataProvider.

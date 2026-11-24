@@ -18,6 +18,10 @@ public partial class GeminoDbContext : DbContext
 
     public virtual DbSet<Portfolio> Portfolios { get; set; }
 
+    public virtual DbSet<ProviderConnection> ProviderConnections { get; set; }
+
+    public virtual DbSet<ProviderSecurityMapping> ProviderSecurityMappings { get; set; }
+
     public virtual DbSet<Security> Securities { get; set; }
 
     public virtual DbSet<User> Users { get; set; }
@@ -35,6 +39,7 @@ public partial class GeminoDbContext : DbContext
             entity.Property(e => e.RowVersion)
                 .IsRowVersion()
                 .IsConcurrencyToken();
+            entity.Property(e => e.ShareCount).HasColumnType("decimal(28, 9)");
 
             entity.HasOne(d => d.Portfolio).WithMany(p => p.Holdings)
                 .HasForeignKey(d => d.PortfolioId)
@@ -77,6 +82,8 @@ public partial class GeminoDbContext : DbContext
 
         modelBuilder.Entity<Portfolio>(entity =>
         {
+            entity.HasIndex(e => new { e.OwnerId, e.PortfolioId }, "AK_Portfolios_OwnerId_PortfolioId").IsUnique();
+
             entity.HasIndex(e => e.OwnerId, "IX_Portfolios_OwnerId");
 
             entity.Property(e => e.PortfolioId).HasDefaultValueSql("(newsequentialid())", "DF_Portfolios_PortfolioId");
@@ -88,6 +95,7 @@ public partial class GeminoDbContext : DbContext
                 .IsFixedLength()
                 .UseCollation("Latin1_General_100_BIN2")
                 .HasDefaultValue("USD", "DF_Portfolios_CurrencyType");
+            entity.Property(e => e.DisplayName).HasMaxLength(200);
             entity.Property(e => e.RowVersion)
                 .IsRowVersion()
                 .IsConcurrencyToken();
@@ -96,6 +104,53 @@ public partial class GeminoDbContext : DbContext
                 .HasForeignKey(d => d.OwnerId)
                 .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("FK_Portfolios_Users");
+        });
+
+        modelBuilder.Entity<ProviderConnection>(entity =>
+        {
+            entity.HasKey(e => e.ConnectionId);
+
+            entity.HasIndex(e => new { e.OwnerId, e.Provider, e.Environment, e.ExternalAccountId }, "UQ_ProviderConnections_Account").IsUnique();
+
+            entity.HasIndex(e => new { e.OwnerId, e.CredentialReference }, "UQ_ProviderConnections_Credential").IsUnique();
+
+            entity.HasIndex(e => e.PortfolioId, "UQ_ProviderConnections_Portfolio").IsUnique();
+
+            entity.Property(e => e.ConnectionId).ValueGeneratedNever();
+            entity.Property(e => e.ExternalAccountId)
+                .HasMaxLength(200)
+                .UseCollation("Latin1_General_100_BIN2");
+            entity.Property(e => e.ExternalAccountType).HasMaxLength(100);
+            entity.Property(e => e.LastError).HasMaxLength(500);
+            entity.Property(e => e.RowVersion)
+                .IsRowVersion()
+                .IsConcurrencyToken();
+            entity.Property(e => e.SyncGeneration).HasDefaultValue(1L, "DF_ProviderConnections_Generation");
+
+            entity.HasOne(d => d.Portfolio).WithMany(p => p.ProviderConnections)
+                .HasPrincipalKey(p => new { p.OwnerId, p.PortfolioId })
+                .HasForeignKey(d => new { d.OwnerId, d.PortfolioId })
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_ProviderConnections_Portfolios");
+        });
+
+        modelBuilder.Entity<ProviderSecurityMapping>(entity =>
+        {
+            entity.HasKey(e => e.MappingId);
+
+            entity.HasIndex(e => new { e.Provider, e.Environment, e.ExternalAssetId }, "UQ_ProviderSecurityMappings_Asset").IsUnique();
+
+            entity.HasIndex(e => new { e.Provider, e.Environment, e.SecurityId }, "UQ_ProviderSecurityMappings_Security").IsUnique();
+
+            entity.Property(e => e.MappingId).ValueGeneratedNever();
+            entity.Property(e => e.ExternalAssetId)
+                .HasMaxLength(200)
+                .UseCollation("Latin1_General_100_BIN2");
+
+            entity.HasOne(d => d.Security).WithMany(p => p.ProviderSecurityMappings)
+                .HasForeignKey(d => d.SecurityId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_ProviderSecurityMappings_Securities");
         });
 
         modelBuilder.Entity<Security>(entity =>

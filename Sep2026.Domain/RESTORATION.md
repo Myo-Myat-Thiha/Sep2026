@@ -36,6 +36,20 @@ saved timestamps, or setting saved collections through business-action methods.
 Invalid saved state produces a validation exception instead of being silently
 corrected or replaced by default values.
 
+## Scope note: future external account imports
+
+The [connected portfolio scope](../docs/CONNECTED_PORTFOLIO_SCOPE.md) makes external
+accounts authoritative for synchronized cash and positions. Future imports must
+validate/map their reported state without replaying deposits or trades. The
+mutation methods discussed above describe current Domain behavior, not the
+planned public feature set for a read-only connected account.
+
+Before accepting real snapshots, review whole-share quantities, nonnegative
+balances/positions, required cost basis, account-type mappings, and the separation
+between local archival and provider connection state. Unsupported external data
+must produce an explicit failure while preserving the previous accepted snapshot,
+rather than being changed to satisfy existing restoration constraints.
+
 ## User input and saved values
 
 `UserProfileRules` is the shared owner-profile policy. The Application creation

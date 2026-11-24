@@ -9,6 +9,8 @@ using Microsoft.Extensions.Options;
 using Sep2026.Application.DTOs;
 using Sep2026.Application.Interfaces;
 using Sep2026.Application.Services;
+using Sep2026.Application.Security;
+using Sep2026.Application.Exceptions;
 using Sep2026.Domain;
 using Sep2026.Infrastructure.Persistence;
 using Xunit;
@@ -19,6 +21,48 @@ public sealed class ConsoleSessionTests
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
     private const string Password = "Correct horse battery staple!";
+
+    [Fact]
+    public async Task LinkPortfolioFromEmptyListUsesTheSignedInOwnerAndReloadsAfterSuccess()
+    {
+        var scenario = new Scenario { EmptyList = true };
+        using var output = new StringWriter();
+        using var host = CreateHost(new ScopeCheckingReader($"alice@example.com\n{Password}\nl\nMy paper account\nprivate-key\nprivate-secret\ny\n\nq\n", scenario), output, scenario);
+        await ConsoleSession.RunAsync(host).WaitAsync(Timeout);
+        var import = Assert.Single(scenario.LinkImports);
+        Assert.Equal(scenario.DefaultUserId, import.OwnerId);
+        Assert.Equal(1.25m, Assert.Single(import.Snapshot.Positions).Quantity);
+        Assert.Equal(2, scenario.UserRequests.Count);
+        Assert.Contains("Portfolio linked successfully", output.ToString());
+        Assert.DoesNotContain("private-key", output.ToString());
+        Assert.DoesNotContain("private-secret", output.ToString());
+        AssertScopesDisposed(scenario);
+    }
+
+    [Fact]
+    public async Task CancelledLinkCollectsNoProviderOrPersistenceDependencies()
+    {
+        var scenario = new Scenario { EmptyList = true };
+        using var output = new StringWriter();
+        using var host = CreateHost(new ScopeCheckingReader($"alice@example.com\n{Password}\nl\nb\nq\n", scenario), output, scenario);
+        await ConsoleSession.RunAsync(host).WaitAsync(Timeout);
+        Assert.Empty(scenario.LinkDependencies);
+        Assert.Empty(scenario.LinkImports);
+    }
+
+    [Fact]
+    public async Task ProviderFailureIsVisibleAndDoesNotSaveCredentialsOrCreatePortfolio()
+    {
+        var scenario = new Scenario { EmptyList = true, FailLinkRead = true };
+        using var output = new StringWriter();
+        using var host = CreateHost(new ScopeCheckingReader($"alice@example.com\n{Password}\nl\nName\nprivate-key\nprivate-secret\ny\n\nq\n", scenario), output, scenario);
+        await ConsoleSession.RunAsync(host).WaitAsync(Timeout);
+        Assert.Contains("Paper account access was rejected", output.ToString());
+        Assert.Empty(scenario.LinkImports);
+        Assert.Equal(0, scenario.LinkCredentialSaves);
+        Assert.DoesNotContain("private-secret", output.ToString());
+        AssertScopesDisposed(scenario);
+    }
 
     [Fact]
     public async Task DetailsThatNoLongerBelongToTheSignedInOwnerAreNotDisplayed()
@@ -417,12 +461,20 @@ public sealed class ConsoleSessionTests
             builder.Services.RemoveAll<IUserStore>();
             builder.Services.AddScoped<IUserStore>(provider =>
                 new RecordingUserStore(provider.GetRequiredService<GeminoDbContext>(), scenario));
+            builder.Services.AddScoped(_ => new RecordingLinkDependencies(scenario));
+            builder.Services.RemoveAll<IInvestmentAccountProvider>();
+            builder.Services.RemoveAll<ILinkedPortfolioStore>();
+            builder.Services.RemoveAll<IProviderCredentialStore>();
+            builder.Services.AddScoped<IInvestmentAccountProvider>(provider => provider.GetRequiredService<RecordingLinkDependencies>());
+            builder.Services.AddScoped<ILinkedPortfolioStore>(provider => provider.GetRequiredService<RecordingLinkDependencies>());
+            builder.Services.AddScoped<IProviderCredentialStore>(provider => provider.GetRequiredService<RecordingLinkDependencies>());
         }
         return builder.Build();
     }
 
     private static void AssertScopesDisposed(Scenario scenario)
     {
+        Assert.All(scenario.LinkDependencies, instance => Assert.True(instance.Disposed));
         Assert.All(scenario.ProfileStores, instance =>
         {
             Assert.True(instance.DisposedAsync);
@@ -437,6 +489,10 @@ public sealed class ConsoleSessionTests
 
     private sealed class Scenario
     {
+        internal List<InitialPortfolioImport> LinkImports { get; } = new();
+        internal List<RecordingLinkDependencies> LinkDependencies { get; } = new();
+        internal int LinkCredentialSaves { get; set; }
+        internal bool FailLinkRead { get; init; }
         internal Guid PortfolioId { get; } = Guid.NewGuid();
         internal List<Guid> UserRequests { get; } = new();
         internal List<Guid> DetailRequests { get; } = new();
@@ -460,6 +516,44 @@ public sealed class ConsoleSessionTests
         internal List<string> SignInEmails { get; } = new();
         internal bool RejectSignIn { get; init; }
         internal bool SetupAllowed { get; set; } = true;
+    }
+
+    private sealed class RecordingLinkDependencies : IInvestmentAccountProvider, ILinkedPortfolioStore, IProviderCredentialStore, IAsyncDisposable
+    {
+        private readonly Scenario scenario;
+        internal bool Disposed { get; private set; }
+        public RecordingLinkDependencies(Scenario scenario) { this.scenario = scenario; scenario.LinkDependencies.Add(this); }
+        public Task<bool> OwnerExistsAsync(Guid ownerId, CancellationToken cancellationToken = default) => Task.FromResult(true);
+        public Task<string> GetAccountIdAsync(InvestmentProvider provider, ProviderEnvironment environment, ProviderCredentials credentials, CancellationToken cancellationToken = default)
+            => Task.FromResult("verified-account");
+        public Task<ExternalPortfolioSnapshotDto> ReadSnapshotAsync(InvestmentProvider provider, ProviderEnvironment environment,
+            string externalAccountId, ProviderCredentials credentials, CancellationToken cancellationToken = default)
+        {
+            if (scenario.FailLinkRead) throw new InvestmentAccountReadException("Paper account access was rejected.");
+            var time = DateTimeOffset.UtcNow;
+            return Task.FromResult(new ExternalPortfolioSnapshotDto(externalAccountId, "USD", 100,
+                new[] { new ExternalPositionDto("asset", "AAPL", "us_equity", "USD", ExternalPositionSide.Long, 1.25m, null) }, time, time, true));
+        }
+        public Task<LinkedPortfolioDto?> FindAsync(Guid ownerId, InvestmentProvider provider, ProviderEnvironment environment,
+            string externalAccountId, CancellationToken cancellationToken = default) => Task.FromResult<LinkedPortfolioDto?>(null);
+        public Task<IPortfolioLinkLock> AcquireLinkLockAsync(Guid ownerId, InvestmentProvider provider, ProviderEnvironment environment,
+            string externalAccountId, CancellationToken cancellationToken = default) => Task.FromResult<IPortfolioLinkLock>(new FakeLinkLock());
+        public Task<LinkPortfolioResultDto> CreateAsync(InitialPortfolioImport import, IPortfolioLinkLock linkLock, CancellationToken cancellationToken = default)
+        {
+            scenario.LinkImports.Add(import);
+            return Task.FromResult(new LinkPortfolioResultDto(LinkPortfolioOutcome.Linked,
+                new(import.PortfolioId, import.OwnerId, import.Provider, import.Environment, import.Snapshot.ExternalAccountId, import.DisplayName, DateTimeOffset.UtcNow)));
+        }
+        public Task SaveAsync(Guid ownerId, Guid reference, ProviderCredentials credentials, CancellationToken cancellationToken = default)
+        { scenario.LinkCredentialSaves++; return Task.CompletedTask; }
+        public Task DeleteAsync(Guid ownerId, Guid reference, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public ValueTask DisposeAsync() { Disposed = true; return ValueTask.CompletedTask; }
+    }
+
+    private sealed class FakeLinkLock : IPortfolioLinkLock
+    {
+        public CancellationToken LostToken => CancellationToken.None;
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private sealed class RecordingService : IPortfolioService, IAsyncDisposable

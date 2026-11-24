@@ -1,5 +1,25 @@
 # Sep2026
 
+## Project direction: connected portfolio management
+
+Gemino is a user's orchestration and analysis layer across external investment
+providers. In the updated scope, "create portfolio" means **connect an existing
+external investment account** through **Link Portfolio**, then import and synchronize its balances and
+holdings. The external provider supplies financial state; Gemino stores a local
+representation and user display preferences. The first connection is proposed
+as read-only, with Alpaca as the candidate initial provider.
+
+See the [connected portfolio scope](docs/CONNECTED_PORTFOLIO_SCOPE.md) for ownership,
+connection identity, synchronization, model compatibility, and implementation order.
+The [Link Portfolio implementation plan](docs/LINK_PORTFOLIO_IMPLEMENTATION_PLAN.md)
+sets out the proposed paper-account release, database/model changes, Application
+services, provider adapter, console flow, and verification stages.
+The Link Portfolio Application service/contracts are implemented with fake-based
+tests; provider/storage/schema/UI integration and sync remain planned. The current application creates
+local owner profiles and browses saved portfolios; its API client currently
+provides market data, not private account access. Historical price collection
+remains a separate [market-data ETL feature](docs/HISTORICAL_MARKET_DATA_ETL.md).
+
 ## Project structure
 
 The solution targets .NET 10 and contains four application projects and four test projects:
@@ -73,11 +93,12 @@ The EF Core packages, generated
 entities, and `GeminoDbContext` are in Infrastructure. The first read-only
 `PortfolioRepository` loads complete portfolios through the Domain restoration
 factories. See the [Portfolio repository guide](Sep2026.Infrastructure/Persistence/PORTFOLIO_REPOSITORY.md)
-for its dependency flow, mappings, usage, and tests. Broker workflows are deferred. The
+for its dependency flow, mappings, usage, and tests. Link Portfolio and read-only
+synchronization are the next planned portfolio workflows. The
 initial SQL Server schema is versioned under `Persistence/Sql`. See the
 [database setup instructions](Sep2026.Infrastructure/Persistence/Sql/README.md)
-for creating the `Gemino` portfolio tables and market-price history. Broker order submission and execution
-history are deferred until an external broker integration is introduced.
+for creating the `Gemino` portfolio tables and market-price history. Order
+submission and execution-history ingestion remain outside the first account-linking release.
 
 `PortfolioService` coordinates the repository read and returns detached portfolio,
 holding, and quote DTOs through `IPortfolioService`. See the
@@ -229,6 +250,15 @@ DTOs and its scope factory between requests. Resolving a context configures it;
 the connection is opened when a database operation is requested. Startup currently
 performs no database queries or schema changes. See Microsoft's
 [DbContext lifetime and configuration guidance](https://learn.microsoft.com/en-us/ef/core/dbcontext-configuration/).
+
+## Planned historical market-data collection
+
+The proposed [historical market-data ETL plan](docs/HISTORICAL_MARKET_DATA_ETL.md)
+describes scheduled Alpaca history collection, initial backfill, incremental
+catch-up, proposed SQL tables, layer responsibilities, recovery, and staged
+implementation. It explains ETL versus reverse ETL and marks dataset/scheduling
+defaults as proposals. The collection service and scheduled job are not yet
+implemented or enabled.
 
 ## Tests
 

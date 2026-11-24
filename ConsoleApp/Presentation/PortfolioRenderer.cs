@@ -48,6 +48,14 @@ namespace ConsoleApp.Presentation
             output.WriteLine(message);
         }
 
+        public void ShowLinkPortfolio()
+        {
+            ShowHeader("Gemino - Link Portfolio");
+            output.WriteLine("Provider: Alpaca   Environment: Paper");
+            output.WriteLine("Import your existing account cash and positions. Gemino reads account data only.");
+            output.WriteLine("Use the API key and secret for the paper account you want to link.");
+        }
+
         public void ShowPasswordSetup()
         {
             ShowHeader("Gemino - Set initial password");
@@ -70,7 +78,7 @@ namespace ConsoleApp.Presentation
 
             if (portfolios.Count == 0)
             {
-                output.WriteLine("No portfolios found for this user ID.");
+                output.WriteLine("No portfolios found. Choose L to Link Portfolio.");
                 return;
             }
 
@@ -81,6 +89,8 @@ namespace ConsoleApp.Presentation
                 var portfolio = portfolios[index];
                 var created = portfolio.CreatedAt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
                 output.WriteLine($"{index + 1,3}  {portfolio.PortfolioType,-12}  {portfolio.CurrencyType,-8}  {FormatAmount(portfolio.CashBalance),22}  {portfolio.Status,-9}  {created}");
+                if (portfolio.DisplayName is not null) output.WriteLine($"     {portfolio.DisplayName}");
+                ShowConnection(portfolio.Connection);
             }
         }
 
@@ -93,6 +103,8 @@ namespace ConsoleApp.Presentation
         public void ShowPortfolioDetails(PortfolioDetailsDto portfolio)
         {
             ShowHeader("Gemino - Portfolio details");
+            if (portfolio.DisplayName is not null) output.WriteLine($"Name:         {portfolio.DisplayName}");
+            ShowConnection(portfolio.Connection);
             output.WriteLine($"Portfolio:    {portfolio.PortfolioId}");
             output.WriteLine($"Owner:        {portfolio.OwnerId}");
             output.WriteLine($"Type:         {portfolio.PortfolioType}");
@@ -114,8 +126,10 @@ namespace ConsoleApp.Presentation
             {
                 output.WriteLine($"{holding.TickerSymbol} - {holding.SecurityType}");
                 output.WriteLine($"  Holding ID:             {holding.HoldingId}");
-                output.WriteLine($"  Shares:                 {holding.ShareCount.ToString("N0", CultureInfo.InvariantCulture)}");
-                output.WriteLine($"  Average purchase price: {portfolio.CurrencyType} {FormatAmount(holding.AveragePurchasePrice)}");
+                output.WriteLine($"  Shares:                 {holding.ShareCount.ToString("#,0.############################", CultureInfo.InvariantCulture)}");
+                var averageCost = holding.AveragePurchasePrice is { } cost
+                    ? $"{portfolio.CurrencyType} {FormatAmount(cost)}" : "Cost unavailable";
+                output.WriteLine($"  Average purchase price: {averageCost}");
 
                 var quote = holding.LatestQuote;
                 if (quote is null)
@@ -139,6 +153,16 @@ namespace ConsoleApp.Presentation
             output.WriteLine("Return to the list and use R to reload it.");
         }
 
+        private void ShowConnection(PortfolioConnectionDto? connection)
+        {
+            if (connection is null) return;
+            output.WriteLine($"Source: {connection.Provider} / {connection.Environment} / {connection.Status}");
+            output.WriteLine($"Last successful sync: {FormatTimestamp(connection.LastSuccessfulSyncAt)}");
+            output.WriteLine($"Account read: {FormatTimestamp(connection.FetchStartedAt)} to {FormatTimestamp(connection.FetchCompletedAt)}");
+            if (connection.ProviderObservedAt is { } observed) output.WriteLine($"Provider observation: {FormatTimestamp(observed)}");
+            output.WriteLine("Showing the last saved import; Reload reads Gemino, not the provider.");
+        }
+
         public void ShowError(string message)
         {
             ShowHeader("Gemino - Unable to complete");
@@ -146,6 +170,16 @@ namespace ConsoleApp.Presentation
         }
 
         public void ShowNotice(string message) => output.WriteLine(message);
+
+        public void ShowLinkResult(LinkPortfolioResultDto result)
+        {
+            ShowHeader("Gemino - Link Portfolio result");
+            output.WriteLine(result.Outcome == LinkPortfolioOutcome.Linked
+                ? "Portfolio linked successfully." : "This account is already linked. Its saved settings were kept.");
+            output.WriteLine($"Source: {result.Portfolio.Provider} / {result.Portfolio.Environment}");
+            if (result.Portfolio.DisplayName is { } name) output.WriteLine($"Name: {name}");
+            output.WriteLine($"Last successful sync: {FormatTimestamp(result.Portfolio.LastSuccessfulSyncAt)}");
+        }
 
         public void ShowGoodbye()
         {

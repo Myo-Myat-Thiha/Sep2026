@@ -10,4 +10,5 @@ public interface IPortfolioService
     Task<IReadOnlyList<PortfolioSummaryDto>> GetByUserIdAsync(
         Guid userId,
         CancellationToken cancellationToken = default);
+    
 }

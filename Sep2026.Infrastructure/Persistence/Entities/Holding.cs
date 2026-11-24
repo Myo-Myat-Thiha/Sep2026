@@ -11,9 +11,9 @@ public partial class Holding
 
     public Guid SecurityId { get; set; }
 
-    public int ShareCount { get; set; }
+    public decimal ShareCount { get; set; }
 
-    public decimal AveragePurchasePrice { get; set; }
+    public decimal? AveragePurchasePrice { get; set; }
 
     public byte[] RowVersion { get; set; } = null!;
 

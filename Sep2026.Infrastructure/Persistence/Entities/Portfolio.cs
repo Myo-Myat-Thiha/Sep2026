@@ -21,7 +21,11 @@ public partial class Portfolio
 
     public byte[] RowVersion { get; set; } = null!;
 
+    public string? DisplayName { get; set; }
+
     public virtual ICollection<Holding> Holdings { get; set; } = new List<Holding>();
 
     public virtual User Owner { get; set; } = null!;
+
+    public virtual ICollection<ProviderConnection> ProviderConnections { get; set; } = new List<ProviderConnection>();
 }

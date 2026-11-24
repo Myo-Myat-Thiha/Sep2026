@@ -26,6 +26,7 @@ public sealed class PortfolioService : IPortfolioService
 
         var portfolio = await repository.GetByIdAsync(portfolioId, cancellationToken);
         if (portfolio is null) return null;
+        var metadata = await queries.GetConnectionAsync(portfolio.OwnerId, portfolio.PortfolioId, cancellationToken);
 
         var holdings = portfolio.Holdings.Select(holding =>
         {
@@ -50,7 +51,7 @@ public sealed class PortfolioService : IPortfolioService
             portfolio.CurrencyType.ToString(),
             portfolio.Status.ToString(),
             portfolio.CreatedAt,
-            Array.AsReadOnly(holdings));
+            Array.AsReadOnly(holdings), metadata.DisplayName, metadata.Connection);
     }
 
     public async Task<IReadOnlyList<PortfolioSummaryDto>> GetByUserIdAsync(

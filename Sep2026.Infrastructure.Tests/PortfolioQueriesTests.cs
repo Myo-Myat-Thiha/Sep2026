@@ -81,7 +81,8 @@ public class PortfolioQueriesSqlServerTests : IClassFixture<SqlServerFixture>
         Assert.DoesNotContain("[Securities]", sql);
         Assert.DoesNotContain("[Users]", sql);
         Assert.DoesNotContain("[RowVersion]", sql);
-        Assert.DoesNotContain("JOIN", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("[ProviderConnections]", sql);
+        Assert.DoesNotContain("CredentialReference", sql);
     }
 
     [SqlServerFact]

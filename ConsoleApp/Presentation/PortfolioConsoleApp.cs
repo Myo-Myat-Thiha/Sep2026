@@ -214,6 +214,11 @@ namespace ConsoleApp.Presentation
                     case PortfolioAction.Reload:
                         reload = true;
                         break;
+                    case PortfolioAction.Link:
+                        if (await LinkPortfolioAsync(user, cancellationToken) == PortfolioAction.Exit)
+                            return PortfolioAction.Exit;
+                        reload = true;
+                        break;
                     case PortfolioAction.Select when portfolios is not null:
                         var action = await ShowDetailsAsync(user.UserId, portfolios[selection.Index].PortfolioId, cancellationToken);
                         if (action is PortfolioAction.Exit or PortfolioAction.ChangeUser)
@@ -250,6 +255,38 @@ namespace ConsoleApp.Presentation
                 var action = await input.ReadDetailActionAsync(cancellationToken);
                 if (action != PortfolioAction.Reload) return action;
             }
+        }
+
+        private async Task<PortfolioAction> LinkPortfolioAsync(UserDto user, CancellationToken cancellationToken)
+        {
+            renderer.ShowLinkPortfolio();
+            // Read/confirm all secret input before creating a service/SQL scope.
+            var form = await input.ReadPortfolioLinkAsync(cancellationToken);
+            if (form.Action != PortfolioAction.Link) return form.Action;
+            renderer.ShowLoading("Verifying the Alpaca Paper account and importing its positions...");
+            try
+            {
+                LinkPortfolioResultDto result;
+                await using (var scope = scopeFactory.CreateAsyncScope())
+                    result = await scope.ServiceProvider.GetRequiredService<LinkPortfolioService>().LinkAsync(user.UserId,
+                        new(InvestmentProvider.Alpaca, ProviderEnvironment.Paper, form.DisplayName), form.Credentials!, cancellationToken);
+                renderer.ShowLinkResult(result);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (InvestmentAccountReadException exception) { renderer.ShowError(exception.Message); }
+            catch (PortfolioLinkCommitUnknownException)
+            { renderer.ShowError("Could not confirm the link. Check your portfolio list before retrying; credentials were retained for recovery."); }
+            catch (PortfolioLinkNotCommittedException)
+            { renderer.ShowError("The portfolio import was not saved. Existing portfolios were preserved. Check the connection and retry."); }
+            catch (Exception exception) when (exception is ArgumentException or NotSupportedException or InvalidDataException)
+            { renderer.ShowError(exception.Message); }
+            catch (Exception exception)
+            {
+                // Do not log raw provider/vault exceptions or request objects.
+                logger.LogDebug("Link Portfolio failed with {FailureType}.", exception.GetType().Name);
+                renderer.ShowError("Could not complete Link Portfolio. Check the provider, database, and protected credential storage.");
+            }
+            return await input.WaitForContinueAsync(cancellationToken) ? PortfolioAction.Back : PortfolioAction.Exit;
         }
 
         private void ShowLoadError(Exception exception, string operation, Guid id)

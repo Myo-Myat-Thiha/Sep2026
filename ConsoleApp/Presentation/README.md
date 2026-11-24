@@ -4,6 +4,21 @@ The console UI uses `IPortfolioService` for saved-data reads and `UserService`
 for local sign-in, owner profiles, and initial password setup. The signed-in
 profile lives only in the console session; there is no JWT or remote registration.
 
+## Planned connected-account workflow
+
+The [updated project scope](../../docs/CONNECTED_PORTFOLIO_SCOPE.md) replaces the
+proposed standalone portfolio-creation form with **Link Portfolio**.
+The future UI will select a provider, authorize/select an external account,
+import its state, and display source, environment, connection status, and last
+successful sync. Account authorization is separate from local Gemino sign-in.
+
+The current menus do not connect accounts or synchronize private provider data.
+When this workflow is implemented, keep pending/failed initial imports distinct
+from successful empty portfolios and retain stale saved data after refresh
+failures. A display alias is a local preference; cash and positions come from the
+provider. See the [implementation plan](../../docs/LINK_PORTFOLIO_IMPLEMENTATION_PLAN.md)
+for the proposed `L: Link Portfolio` and `S: Refresh from provider` actions.
+
 ## Files
 
 | File | Responsibility |

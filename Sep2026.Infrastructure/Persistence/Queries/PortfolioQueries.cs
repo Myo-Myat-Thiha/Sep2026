@@ -13,6 +13,30 @@ namespace Sep2026.Infrastructure.Persistence.Queries
             ArgumentNullException.ThrowIfNull(context);
             _context = context;
         }
+        public async Task<(string? DisplayName, PortfolioConnectionDto? Connection)> GetConnectionAsync(
+            Guid ownerId, Guid portfolioId, CancellationToken cancellationToken = default)
+        {
+            if (ownerId == Guid.Empty || portfolioId == Guid.Empty) throw new ArgumentException("Owner and portfolio IDs are required.");
+            var row = await _context.Portfolios.AsNoTracking()
+                .Where(portfolio => portfolio.OwnerId == ownerId && portfolio.PortfolioId == portfolioId)
+                .Select(portfolio => new
+                {
+                    portfolio.DisplayName,
+                    Connection = portfolio.ProviderConnections.Select(connection => new PortfolioConnectionDto(
+                        (InvestmentProvider)connection.Provider, (ProviderEnvironment)connection.Environment,
+                        (ProviderConnectionStatus)connection.ConnectionStatus, connection.LastSuccessfulSyncAt,
+                        connection.FetchStartedAt, connection.FetchCompletedAt, connection.ProviderObservedAt)).SingleOrDefault()
+                }).SingleOrDefaultAsync(cancellationToken);
+            ValidateConnection(row?.Connection);
+            return (row?.DisplayName, row?.Connection);
+        }
+
+        private static void ValidateConnection(PortfolioConnectionDto? connection)
+        {
+            if (connection is not null && (!Enum.IsDefined(connection.Provider) ||
+                !Enum.IsDefined(connection.Environment) || !Enum.IsDefined(connection.Status)))
+                throw new InvalidDataException("The saved portfolio has an unsupported provider connection.");
+        }
         public async Task<IReadOnlyList<PortfolioSummaryDto>> GetByUserIdAsync(
             Guid userId,
             CancellationToken cancellationToken = default)
@@ -35,7 +59,12 @@ namespace Sep2026.Infrastructure.Persistence.Queries
                     portfolio.CurrencyType,
                     portfolio.CashBalance,
                     portfolio.Status,
-                    portfolio.CreatedAt
+                    portfolio.CreatedAt,
+                    portfolio.DisplayName,
+                    Connection = portfolio.ProviderConnections.Select(connection => new PortfolioConnectionDto(
+                        (InvestmentProvider)connection.Provider, (ProviderEnvironment)connection.Environment,
+                        (ProviderConnectionStatus)connection.ConnectionStatus, connection.LastSuccessfulSyncAt,
+                        connection.FetchStartedAt, connection.FetchCompletedAt, connection.ProviderObservedAt)).SingleOrDefault()
                 })
                 .ToListAsync(cancellationToken);
 
@@ -54,8 +83,9 @@ namespace Sep2026.Infrastructure.Persistence.Queries
                     throw new InvalidDataException(
                         $"Portfolio '{portfolio.PortfolioId}' has an unsupported type, status, or currency.");
 
+                ValidateConnection(portfolio.Connection);
                 return new PortfolioSummaryDto(portfolio.PortfolioId, portfolioType,
-                    currency, portfolio.CashBalance, status, portfolio.CreatedAt);
+                    currency, portfolio.CashBalance, status, portfolio.CreatedAt, portfolio.DisplayName, portfolio.Connection);
             }).ToArray();
 
             // An empty database result naturally produces an empty read-only collection.

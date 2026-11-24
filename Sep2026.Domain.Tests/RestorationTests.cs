@@ -82,6 +82,7 @@ public class RestorationTests
     [Theory]
     [InlineData(0, 0)]
     [InlineData(0, 25)]
+    [InlineData(1, 0)]
     [InlineData(10, 25)]
     public void ValidHoldingStatesCanBeRestored(int shares, int averagePrice)
     {
@@ -95,7 +96,6 @@ public class RestorationTests
     [Theory]
     [InlineData(-1, 25)]
     [InlineData(0, -1)]
-    [InlineData(1, 0)]
     public void InvalidHoldingAmountsAreRejected(int shares, int averagePrice)
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => HoldingModel.Restore(
@@ -328,10 +328,10 @@ public class RestorationTests
     [Fact]
     public void ShareCountOverflowLeavesTheHoldingUnchanged()
     {
-        var holding = HoldingModel.Restore(Guid.NewGuid(), new SecurityModel("AAPL"), Guid.NewGuid(), int.MaxValue, 1m);
+        var holding = HoldingModel.Restore(Guid.NewGuid(), new SecurityModel("AAPL"), Guid.NewGuid(), decimal.MaxValue, 0m);
         Assert.Throws<OverflowException>(() => holding.BuyShares(1, 1m));
-        Assert.Equal(int.MaxValue, holding.ShareCount);
-        Assert.Equal(1m, holding.AveragePurchasePrice);
+        Assert.Equal(decimal.MaxValue, holding.ShareCount);
+        Assert.Equal(0m, holding.AveragePurchasePrice);
     }
 
     private static PortfolioModel RestorePortfolio(
